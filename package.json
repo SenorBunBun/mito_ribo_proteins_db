@@ -1,0 +1,57 @@
+{
+  "name": "desire",
+  "version": "1.0.0",
+  "description": "DatabasE for Study and Imaging of Ribosomal Evolution",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "webpack --config webpack.config.js --progress --colors --mode development",
+    "watch": "webpack --config webpack.config.js --watch --mode development"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LDWLab/DESIRE.git"
+  },
+  "author": "Petar Penev",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/LDWLab/DESIRE/issues"
+  },
+  "homepage": "https://github.com/LDWLab/DESIRE#readme",
+  "devDependencies": {
+    "@babel/core": "^7.10.5",
+    "@babel/preset-env": "^7.10.4",
+    "@babel/preset-react": "^7.10.4",
+    "babel-loader": "^8.1.0",
+    "babel-preset-env": "^1.7.0",
+    "babel-preset-react": "^6.24.1",
+    "vue-loader": "15.9",
+    "vue-template-compiler": "^2.7.15",
+    "vuetify-loader": "^1.9.2",
+    "webpack": "4.44",
+    "webpack-bundle-tracker": "^0.4.3",
+    "webpack-clean-obsolete-chunks": "^0.4.0",
+    "webpack-cli": "4.9"
+  },
+  "dependencies": {
+    "@babel/plugin-proposal-class-properties": "^7.18.6",
+    "@babel/plugin-transform-class-properties": "^7.22.5",
+    "@plotly/react-msa-viewer": "^0.0.2",
+    "@riophae/vue-treeselect": "^0.4.0",
+    "caniuse-lite": "^1.0.30001179",
+    "docute": "^3.4.12",
+    "file-saver": "^2.0.5",
+    "js-cookie": "^3.0.5",
+    "jszip": "^3.10.1",
+    "lodash": "^4.17.20",
+    "parse-mmcif": "^0.0.1",
+    "parse-pdb": "^1.0.0",
+    "react": "^16.13.1",
+    "react-dom": "^16.13.1",
+    "react-msa-viewer": "^1.0.0",
+    "scrollbooster": "^3.0.2",
+    "vue": "^2.7.14",
+    "vue-style-loader": "^4.1.2",
+    "vue-tour": "^2.0.0"
+  }
+}
