@@ -570,7 +570,7 @@ export default {
     },
     async loadFilterOptions() {
       try {
-        const res = await fetch('/api/filter-options/');
+        const res = await fetch('/mtProts/api/filter-options/');
         if (!res.ok) throw new Error(`filter-options HTTP ${res.status}`);
         const data = await res.json();
         this.filterOptions = { ...EMPTY_FILTER_OPTIONS, ...data };
@@ -585,7 +585,7 @@ export default {
     async loadTaxTree() {
       this.taxTreeLoading = true;
       try {
-        const res = await fetch('/api/taxtree/');
+        const res = await fetch('/mtProts/api/taxtree/');
         if (!res.ok) throw new Error(`taxtree HTTP ${res.status}`);
         this.taxTree = await res.json();
         // Open the root node by default.
@@ -621,9 +621,9 @@ export default {
       this.error = null;
       try {
         const endpoint = {
-          sequences: '/api/sequences/',
-          organisms: '/api/organisms/',
-          alignments: '/api/alignments/',
+          sequences: '/mtProts/api/sequences/',
+          organisms: '/mtProts/api/organisms/',
+          alignments: '/mtProts/api/alignments/',
         }[this.activeMode];
         const res = await fetch(`${endpoint}?${this.buildQuery()}`);
         if (!res.ok) throw new Error(`${this.activeMode} HTTP ${res.status}`);
@@ -644,7 +644,7 @@ export default {
     async openDetail(pdataId) {
       this.detailLoading = true;
       try {
-        const res = await fetch(`/api/sequences/${pdataId}/`);
+        const res = await fetch(`/mtProts/api/sequences/${pdataId}/`);
         if (!res.ok) throw new Error(`detail HTTP ${res.status}`);
         this.selectedDetail = await res.json();
       } catch (e) {
@@ -697,7 +697,7 @@ export default {
       // In parallel, also fetch the filtered polymer rows themselves so the
       // developer can inspect them in the console. Cheap (5602 max) and
       // capped at 500/page.
-      const polymersPromise = fetch(`/api/sequences/?${p.toString()}&page_size=500`)
+      const polymersPromise = fetch(`/mtProts/api/sequences/?${p.toString()}&page_size=500`)
         .then((r) => (r.ok ? r.json() : null))
         .then((j) => {
           if (!j) return;
@@ -713,7 +713,7 @@ export default {
         .catch((e) => console.error('[alignments] polymer fetch failed:', e));
 
       try {
-        const res = await fetch(`/api/proteins-for-taxgroups/?${p.toString()}`);
+        const res = await fetch(`/mtProts/api/proteins-for-taxgroups/?${p.toString()}`);
         if (!res.ok) throw new Error(`proteins-for-taxgroups HTTP ${res.status}`);
         const data = await res.json();
         if (reqId !== this.alignmentProteinsReqId) {
