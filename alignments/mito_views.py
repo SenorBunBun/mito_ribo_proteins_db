@@ -300,9 +300,11 @@ def organisms_api(request):
     tag_rows = list(
         PolymerMetadata.objects.using(MITO)
         .filter(pdata__strain_id__in=page_strain_ids)
-        .values('pdata__strain_id', 'evolutionary_origin', 'prediction_type', 'data_location')
+        .values('pdata__strain_id', 'evolutionary_origin', 'prediction_type',
+                'data_location', 'assembly_location')
     )
-    tags = {sid: {'origins': set(), 'prediction_types': set(), 'data_locations': set()}
+    tags = {sid: {'origins': set(), 'prediction_types': set(),
+                  'data_locations': set(), 'assembly_locations': set()}
             for sid in page_strain_ids}
     for r in tag_rows:
         sid = r['pdata__strain_id']
@@ -312,14 +314,16 @@ def organisms_api(request):
         if r['evolutionary_origin']: bucket['origins'].add(r['evolutionary_origin'])
         if r['prediction_type']:     bucket['prediction_types'].add(r['prediction_type'])
         if r['data_location']:       bucket['data_locations'].add(r['data_location'])
+        if r['assembly_location']:   bucket['assembly_locations'].add(r['assembly_location'])
 
     results = [{
         'strain_id': s.strain_id,
         'name': s.name,
         'protein_count': counts.get(s.strain_id, 0),
-        'origins':          sorted(tags[s.strain_id]['origins']),
-        'prediction_types': sorted(tags[s.strain_id]['prediction_types']),
-        'data_locations':   sorted(tags[s.strain_id]['data_locations']),
+        'origins':            sorted(tags[s.strain_id]['origins']),
+        'prediction_types':   sorted(tags[s.strain_id]['prediction_types']),
+        'data_locations':     sorted(tags[s.strain_id]['data_locations']),
+        'assembly_locations': sorted(tags[s.strain_id]['assembly_locations']),
     } for s in page_qs]
 
     return JsonResponse({'results': results, **meta})
