@@ -43,7 +43,6 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'desire_api.apps.DesireApiConfig',
     'webpack_loader',
     'corsheaders',
 ]
@@ -110,12 +109,27 @@ DATABASES = {
         },
     },
     
-    'ncRNA' : {
-        'NAME': 'lncRNA_RBP_DB',
+    'mito' : {
+        'NAME': 'DESIRE_mito_as1',
         'ENGINE': 'mysql.connector.django',
         'USER':  os.environ['DJANGO_USERNAME'],             #Write username here
 	'PASSWORD': os.environ['DJANGO_PASSWORD'],         #And password here
 	'HOST': '130.207.36.76',
+        'PORT': '3306',
+        'OPTIONS': {
+          'autocommit': True,
+          'use_pure': True,
+        },
+    },
+
+    # Required by the patched Django in ~/ncRNA/.venv which does
+    # `ncRNA_connection = connections['ncRNA']` at import time.
+    'ncRNA' : {
+        'NAME': 'lncRNA_RBP_DB',
+        'ENGINE': 'mysql.connector.django',
+        'USER':  os.environ['DJANGO_USERNAME'],
+        'PASSWORD': os.environ['DJANGO_PASSWORD'],
+        'HOST': '130.207.36.76',
         'PORT': '3306',
         'OPTIONS': {
           'autocommit': True,
@@ -202,9 +216,6 @@ COMPRESS_PRECOMPILERS = (
 )
 COMPRESS_ENABLED = True
 
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'pdbe-rna-viewer/build')
-]
 STATIC_ROOT = '/home/RiboVision3/static/'
 STATIC_URL = '/static/'
 COMPRESS_ROOT = 'static/'

@@ -14,12 +14,6 @@ from django.urls import reverse
 from django.contrib.sites.shortcuts import get_current_site
 
 from alignments.models import *
-from alignments.taxonomy_views import *
-from alignments.residue_api import *
-from alignments.structure_api import *
-from alignments.fold_api import *
-from alignments.runal2co import executeAl2co
-import alignments.alignment_query_and_build as aqab
 from twincons.TwinCons import slice_by_name
 from django.db import connection
 import time
