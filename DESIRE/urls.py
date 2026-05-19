@@ -16,11 +16,18 @@ Including another URLconf
 from django.contrib import admin
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from django.urls import path, include
-
+from django.conf import settings
+from django.conf.urls.static import static
+from django.views.static import serve
+from django.urls import path, re_path
 urlpatterns = [
     path('', include('alignments.urls')),
     path('alignments/', include('alignments.urls')),
     path('admin/', admin.site.urls),
 ]
 
-urlpatterns += staticfiles_urlpatterns()
+urlpatterns += [
+    re_path(r'^static/(?P<path>.*)$', serve, {
+        'document_root': settings.STATIC_ROOT,
+    }),
+]

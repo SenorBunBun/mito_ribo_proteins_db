@@ -1,6 +1,6 @@
 wheel
 astroid==2.2.5
-biopython==1.78
+biopython==1.79
 cached-property==1.5.1
 Django==2.2.13
 django-appconf==1.0.4

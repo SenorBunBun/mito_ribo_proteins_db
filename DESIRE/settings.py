@@ -19,13 +19,18 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # See https://docs.djangoproject.com/en/2.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
+#SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
+import os
+import json
+
+with open('/etc/ribovision_config.json') as config_file:
+    config = json.load(config_file)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
 ALLOWED_HOSTS = []
-
+SECRET_KEY = config['SECRET_KEY']
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
@@ -99,8 +104,8 @@ DATABASES = {
     'default': {
         'NAME': 'DESIRE',
         'ENGINE': 'mysql.connector.django',
-        'USER':  os.environ['DJANGO_USERNAME'],             #Write username here
-	'PASSWORD': os.environ['DJANGO_PASSWORD'],         #And password here
+        'USER':  config['DB_USER_NAME'],             #Write username here
+	'PASSWORD': config['DB_PASSWORD'],         #And password here
 	'HOST': '130.207.36.76',
         'PORT': '3306',
         'OPTIONS': {
@@ -112,8 +117,8 @@ DATABASES = {
     'mito' : {
         'NAME': 'DESIRE_mito_as1',
         'ENGINE': 'mysql.connector.django',
-        'USER':  os.environ['DJANGO_USERNAME'],             #Write username here
-	'PASSWORD': os.environ['DJANGO_PASSWORD'],         #And password here
+        'USER':  config['DB_USER_NAME'],             #Write username here
+	'PASSWORD': config['DB_PASSWORD'],         #And password here
 	'HOST': '130.207.36.76',
         'PORT': '3306',
         'OPTIONS': {
@@ -127,8 +132,8 @@ DATABASES = {
     'ncRNA' : {
         'NAME': 'lncRNA_RBP_DB',
         'ENGINE': 'mysql.connector.django',
-        'USER':  os.environ['DJANGO_USERNAME'],
-        'PASSWORD': os.environ['DJANGO_PASSWORD'],
+        'USER':  config['DB_USER_NAME'],
+        'PASSWORD': config['DB_PASSWORD'],
         'HOST': '130.207.36.76',
         'PORT': '3306',
         'OPTIONS': {
@@ -216,7 +221,8 @@ COMPRESS_PRECOMPILERS = (
 )
 COMPRESS_ENABLED = True
 
-STATIC_ROOT = '/home/RiboVision3/static/'
-STATIC_URL = '/static/'
+STATIC_ROOT = '/var/www/mito_ribo_proteins_db/static/'
+STATIC_URL = '/mtProts/static/'
 COMPRESS_ROOT = 'static/'
+FORCE_SCRIPT_NAME = '/mtProts'
 DATA_UPLOAD_MAX_MEMORY_SIZE = 80*1024**2
