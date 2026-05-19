@@ -15,10 +15,12 @@ from django.db.models import Count, Q
 
 from alignments.models import (
     Alignment,
+    AlnData,
     Nomenclature,
     PolymerAlignments,
     PolymerData,
     PolymerMetadata,
+    Residues,
     Species,
     Taxgroups,
 )
@@ -410,3 +412,91 @@ def alignments_api(request):
     } for a in page_qs]
 
     return JsonResponse({'results': results, **meta})
+
+
+# --------------------------------------------------------------------------
+# /api/alignments/<aln_id>/<tax_group>/fasta/
+
+def alignment_fasta_api(request, aln_id, tax_group):
+    """Build an aligned FASTA for one alignment, optionally restricted by taxa.
+
+    `tax_group` is one or more TaxGroups ids (any level), comma-separated.
+    Their strain-level descendants are unioned to select which polymers
+    participate. Passing `0` (or an empty/invalid value) means no taxon
+    narrowing.
+    """
+    try:
+        aln = Alignment.objects.using(MITO).get(pk=aln_id)
+    except Alignment.DoesNotExist:
+        raise Http404(f"Alignment {aln_id} not found")
+
+    pa_qs = PolymerAlignments.objects.using(MITO).filter(aln_id=aln_id)
+    tax_group_ints = []
+    for part in str(tax_group).split(','):
+        part = part.strip()
+        if part.isdigit() and int(part) != 0:
+            tax_group_ints.append(int(part))
+    if tax_group_ints:
+        strain_ids = _expand_taxgroups_to_strains(tax_group_ints)
+        if not strain_ids:
+            return JsonResponse({
+                'aln_id': aln_id, 'name': aln.name,
+                'length': 0, 'sequences': [], 'fasta': '',
+            })
+        member_pdata_ids = list(
+            pa_qs.filter(pdata__strain_id__in=strain_ids)
+            .values_list('pdata_id', flat=True)
+        )
+    else:
+        member_pdata_ids = list(pa_qs.values_list('pdata_id', flat=True))
+
+    if not member_pdata_ids:
+        return JsonResponse({
+            'aln_id': aln_id, 'name': aln.name,
+            'length': 0, 'sequences': [], 'fasta': '',
+        })
+
+    pd_rows = (
+        PolymerData.objects.using(MITO)
+        .filter(id__in=member_pdata_ids)
+        .values('id', 'strain__name', 'strain__strain', 'strain_id',
+                'nomgd__new_name', 'protein_location_header')
+    )
+    header_by_pdata = {r['id']: r for r in pd_rows}
+
+    res_rows = (
+        AlnData.objects.using(MITO)
+        .filter(aln_id=aln_id, res__poldata_id__in=member_pdata_ids)
+        .values('res__poldata_id', 'aln_pos', 'res__unmodresname')
+    )
+    max_pos = 0
+    per_pdata = defaultdict(dict)
+    for r in res_rows:
+        pos = r['aln_pos']
+        per_pdata[r['res__poldata_id']][pos] = (r['res__unmodresname'] or '-')
+        if pos > max_pos:
+            max_pos = pos
+
+    sequences = []
+    fasta_chunks = []
+    for pdata_id in member_pdata_ids:
+        hdr = header_by_pdata.get(pdata_id) or {}
+        positions = per_pdata.get(pdata_id, {})
+        if not positions:
+            continue
+        seq = ''.join(positions.get(p, '-') for p in range(1, max_pos + 1))
+        strain_name = (hdr.get('strain__name') or '').strip()
+        strain_strain = (hdr.get('strain__strain') or '').strip()
+        protein_name = (hdr.get('nomgd__new_name') or '').strip()
+        strain_label = strain_name if not strain_strain else f"{strain_name} {strain_strain}"
+        name = f"{protein_name or 'protein'}|{strain_label or ('strain_' + str(hdr.get('strain_id') or '?'))}|pdata_{pdata_id}"
+        sequences.append({'name': name, 'sequence': seq})
+        fasta_chunks.append(f">{name}\n{seq}")
+
+    return JsonResponse({
+        'aln_id': aln_id,
+        'name': aln.name,
+        'length': max_pos,
+        'sequences': sequences,
+        'fasta': '\n'.join(fasta_chunks) + ('\n' if fasta_chunks else ''),
+    })

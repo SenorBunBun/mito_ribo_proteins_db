@@ -16,6 +16,7 @@ urlpatterns = [
     path('api/organisms/', mito_views.organisms_api, name='organisms_api'),
     path('api/proteins-for-taxgroups/', mito_views.proteins_for_taxgroups_api, name='proteins_for_taxgroups_api'),
     path('api/alignments/', mito_views.alignments_api, name='alignments_api'),
+    path('api/alignments/<int:aln_id>/<str:tax_group>/fasta/', mito_views.alignment_fasta_api, name='alignment_fasta_api'),
 
     path('orthologs/twincons/<str:anchor_structure>/<str:chain>/<str:align_name>/<int:tax_group1>/<int:tax_group2>/<int:minIndex>/<int:maxIndex>', views.twincons_handler, name='twincons'),
     path('orthologs/twincons/<str:anchor_structure>/<str:chain>/<str:align_name>/<int:tax_group1>/<int:tax_group2>', views.twincons_handler, name='twincons'),
