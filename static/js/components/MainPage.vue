@@ -224,6 +224,20 @@
     <main class="content">
       <header class="content-header">
         <h2 class="content-title">{{ modeLabel }}</h2>
+        <div class="header-actions" v-if="activeMode === 'sequences' || activeMode === 'alignments'">
+          <button
+            type="button"
+            class="pill-btn pill-btn-ghost"
+            :disabled="!resultsTotal"
+            @click="toggleSelectQueried"
+          >{{ selectAllMode ? 'Clear selection' : 'Select queried' }}</button>
+          <button
+            type="button"
+            class="pill-btn"
+            :disabled="!downloadCount"
+            @click="downloadFasta"
+          >Download FASTA{{ downloadCount ? ` (${downloadCount.toLocaleString()})` : '' }}</button>
+        </div>
         <div class="result-meta" v-if="resultsTotal !== null">
           {{ resultsTotal.toLocaleString() }} result{{ resultsTotal === 1 ? '' : 's' }}
           <span v-if="resultsTotal > pageSize">· page {{ page }} / {{ totalPages }}</span>
@@ -237,6 +251,7 @@
         <table class="results-table" v-if="results.length">
           <thead>
             <tr>
+              <th class="sel-col"></th>
               <th>Protein</th>
               <th>Strain</th>
               <th>Origin</th>
@@ -251,6 +266,13 @@
               @click="openDetail(r.id)"
               :class="{ selected: selectedDetail && selectedDetail.id === r.id }"
             >
+              <td class="sel-col" @click.stop>
+                <input
+                  type="checkbox"
+                  :checked="isRowChecked(r.id)"
+                  @change="toggleRowChecked(r.id)"
+                />
+              </td>
               <td class="mono">{{ r.protein_name || '—' }}</td>
               <td>{{ r.strain_name || '—' }}</td>
               <td>{{ r.evolutionary_origin || '—' }}</td>
@@ -309,6 +331,7 @@
           <table class="results-table" v-if="results.length">
             <thead>
               <tr>
+                <th class="sel-col"></th>
                 <th>Name</th>
                 <th>Method</th>
                 <th>Source</th>
@@ -322,6 +345,13 @@
                 @click="selectedAlignment = r"
                 :class="{ selected: selectedAlignment && selectedAlignment.aln_id === r.aln_id }"
               >
+                <td class="sel-col" @click.stop>
+                  <input
+                    type="checkbox"
+                    :checked="isRowChecked(r.aln_id)"
+                    @change="toggleRowChecked(r.aln_id)"
+                  />
+                </td>
                 <td>{{ r.name }}</td>
                 <td>{{ r.method }}</td>
                 <td>{{ r.source }}</td>
@@ -372,6 +402,11 @@
       >
         <header class="msa-overlay-header">
           <h3>{{ selectedAlignment && selectedAlignment.name }}</h3>
+          <button
+            type="button"
+            class="pill-btn pill-btn-ghost msa-download-btn"
+            @click.stop="downloadCurrentAlignment"
+          >Download FASTA</button>
           <button type="button" class="close-btn msa-close-btn" @click.stop="closeMsa" aria-label="Close">×</button>
         </header>
         <div ref="msaMount" class="msa-mount" @mousedown="msaDragStart"></div>
@@ -416,6 +451,14 @@ export default {
       taxSearch: '',
       simplifyTree: true,            // hide 'clade' rows by default
       apiBase: (typeof window !== 'undefined' && window.APP_PREFIX) || '',
+      // FASTA selection (used by both Sequences and Alignments modes).
+      //   selectAllMode=false → the active list is an EXPLICIT picked set.
+      //   selectAllMode=true  → every queried row counts as picked, and
+      //                         the active list acts as an EXCLUDE set.
+      // Each mode has its own list so switching modes doesn't wipe state.
+      selectedSeqIds: [],
+      selectedAlnIds: [],
+      selectAllMode: false,
       _fetchTimer: null,
     };
   },
@@ -425,6 +468,18 @@ export default {
     },
     totalPages() {
       return Math.max(1, Math.ceil((this.resultsTotal || 0) / this.pageSize));
+    },
+    /** Which selection list is active for the current mode. */
+    activeSelection() {
+      return this.activeMode === 'alignments' ? this.selectedAlnIds : this.selectedSeqIds;
+    },
+    /** How many rows the Download button will fetch.
+     *  selectAllMode → total minus exclusions. Otherwise → set size. */
+    downloadCount() {
+      if (this.selectAllMode) {
+        return Math.max(0, (this.resultsTotal || 0) - this.activeSelection.length);
+      }
+      return this.activeSelection.length;
     },
     chips() {
       const out = [];
@@ -518,18 +573,71 @@ export default {
       this.page = 1;
       this.selectedDetail = null;
       this.selectedAlignment = null;
+      this.clearSeqSelection();
       this.fetchResults();
+    },
+    clearSeqSelection() {
+      this.selectedSeqIds = [];
+      this.selectedAlnIds = [];
+      this.selectAllMode = false;
+    },
+    _writeActiveSelection(next) {
+      if (this.activeMode === 'alignments') this.selectedAlnIds = next;
+      else this.selectedSeqIds = next;
+    },
+    isRowChecked(id) {
+      const inSet = this.activeSelection.indexOf(id) !== -1;
+      return this.selectAllMode ? !inSet : inSet;
+    },
+    toggleRowChecked(id) {
+      const next = this.activeSelection.slice();
+      const i = next.indexOf(id);
+      if (i === -1) next.push(id); else next.splice(i, 1);
+      this._writeActiveSelection(next);
+    },
+    toggleSelectQueried() {
+      if (this.selectAllMode) {
+        this.clearSeqSelection();
+      } else {
+        this.selectAllMode = true;
+        this._writeActiveSelection([]);
+      }
+    },
+    downloadFasta() {
+      if (!this.downloadCount) return;
+      const q = this.buildQuery();
+      const endpoint = this.activeMode === 'alignments'
+        ? '/api/alignments/fasta/'
+        : '/api/sequences/fasta/';
+      let url = `${this.apiBase}${endpoint}?${q}`;
+      const sel = this.activeSelection;
+      if (this.selectAllMode) {
+        if (sel.length) url += `&exclude_ids=${sel.join(',')}`;
+      } else {
+        url += `&ids=${sel.join(',')}`;
+      }
+      window.location.href = url;
+    },
+    downloadCurrentAlignment() {
+      if (!this.selectedAlignment) return;
+      const tg = this.crossFilters.taxgroup_ids.length
+        ? this.crossFilters.taxgroup_ids.join(',')
+        : '0';
+      window.location.href = `${this.apiBase}/api/alignments/${this.selectedAlignment.aln_id}/${tg}/zip/`;
     },
     onSeqFilterChange() {
       this.page = 1;
+      this.clearSeqSelection();
       this.fetchResults();
     },
     onOrgFilterChange() {
       this.page = 1;
+      this.clearSeqSelection();
       this.fetchResults();
     },
     onAlnFilterChange() {
       this.page = 1;
+      this.clearSeqSelection();
       this.fetchResults();
     },
     debouncedFetch() {
@@ -643,6 +751,7 @@ export default {
       this.crossFilters.taxgroup_ids = ids;
       this.crossFilters.taxgroup_labels = labels;
       this.page = 1;
+      this.clearSeqSelection();
       this.fetchResults();
     },
     pinOrganismToSequences(row) {
@@ -1030,8 +1139,8 @@ export default {
 }
 .content-header {
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
+  gap: 14px;
   padding-bottom: 14px;
   margin-bottom: 24px;
   border-bottom: 1px solid var(--line);
@@ -1050,6 +1159,38 @@ export default {
   font-size: 11px;
   color: var(--ink-subtle);
   letter-spacing: 0.02em;
+}
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+/* When the actions toolbar isn't rendered (non-sequence modes),
+   make sure result-meta still floats to the right. */
+.content-title + .result-meta {
+  margin-left: auto;
+}
+.sel-col {
+  width: 28px;
+  text-align: center;
+  padding: 0 6px;
+}
+.sel-col input[type='checkbox'] {
+  accent-color: var(--purple);
+  cursor: pointer;
+}
+.pill-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.pill-btn-ghost {
+  background: transparent;
+  color: var(--purple-ink);
+  border: 1px solid var(--line-strong);
+}
+.pill-btn-ghost:hover:not(:disabled) {
+  background: var(--purple-tint);
 }
 
 .error {
@@ -1329,12 +1470,15 @@ export default {
   position: relative;
   z-index: 2;
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
   padding: 18px 28px;
   border-bottom: 1px solid var(--line-strong);
   background: var(--bg);
   flex-shrink: 0;
+}
+.msa-download-btn {
+  margin-left: auto;
 }
 .msa-close-btn {
   position: relative;

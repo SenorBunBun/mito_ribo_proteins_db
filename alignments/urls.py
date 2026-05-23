@@ -12,10 +12,13 @@ urlpatterns = [
     path('api/filter-options/', mito_views.filter_options_api, name='filter_options_api'),
     path('api/taxtree/', mito_views.taxtree_api, name='taxtree_api'),
     path('api/sequences/', mito_views.sequences_api, name='sequences_api'),
+    path('api/sequences/fasta/', mito_views.download_fasta_api, name='download_fasta_api'),
     path('api/sequences/<int:pdata_id>/', mito_views.sequence_detail_api, name='sequence_detail_api'),
     path('api/organisms/', mito_views.organisms_api, name='organisms_api'),
     path('api/proteins-for-taxgroups/', mito_views.proteins_for_taxgroups_api, name='proteins_for_taxgroups_api'),
     path('api/alignments/', mito_views.alignments_api, name='alignments_api'),
+    path('api/alignments/fasta/', mito_views.download_alignments_zip_api, name='download_alignments_zip_api'),
+    path('api/alignments/<int:aln_id>/<str:tax_group>/zip/', mito_views.alignment_zip_api, name='alignment_zip_api'),
     path('api/alignments/<int:aln_id>/<str:tax_group>/fasta/', mito_views.alignment_fasta_api, name='alignment_fasta_api'),
 
     path('orthologs/twincons/<str:anchor_structure>/<str:chain>/<str:align_name>/<int:tax_group1>/<int:tax_group2>/<int:minIndex>/<int:maxIndex>', views.twincons_handler, name='twincons'),
