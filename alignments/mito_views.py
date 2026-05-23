@@ -8,6 +8,7 @@ Join map:
     Polymer_Alignments.PData_id/Aln_id -> Polymer_data/Alignment
 """
 
+import re
 from collections import defaultdict
 
 from django.http import JsonResponse, Http404
@@ -28,6 +29,20 @@ from alignments.models import (
 MITO = 'mito'
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 500
+
+
+_PROT_RE = re.compile(r'^([A-Za-z]?)([SL])(\d+)(.*)$', re.IGNORECASE)
+
+def _protein_sort_key(name):
+    # Ribosomal-protein order: S-series first ascending, then L-series
+    # ascending, then anything else alphabetic. Matches names like
+    # 'S1', 'mS39', 'uS02m', 'bL07m', 'mL38'.
+    m = _PROT_RE.match(name or '')
+    if not m:
+        return (2, 0, '', name or '')
+    prefix, letter, num, rest = m.group(1), m.group(2).upper(), int(m.group(3)), m.group(4)
+    bucket = 0 if letter == 'S' else 1
+    return (bucket, num, prefix.lower(), rest.lower())
 
 
 # --------------------------------------------------------------------------
@@ -110,7 +125,8 @@ def filter_options_api(request):
         'sequence_location':   distinct(PolymerMetadata, 'sequence_location'),
         'assembly_location':   distinct(PolymerMetadata, 'assembly_location'),
         'data_location':       distinct(PolymerMetadata, 'data_location'),
-        'protein_names':       distinct(Nomenclature,    'new_name'),
+        'protein_names':       sorted(distinct(Nomenclature, 'new_name'),
+                                       key=_protein_sort_key),
     })
 
 
@@ -192,10 +208,34 @@ def _build_sequences_qs(request):
 
 def sequences_api(request):
     qs = _build_sequences_qs(request)
-    page_qs, meta = _paginate(qs, request)
+
+    # Order by ribosomal-protein convention (S-series ascending, then L-series
+    # ascending, then anything else). Sort key is Python-side, so materialize
+    # (id, new_name) for all matching rows, sort, then page in Python.
+    try:
+        page = max(1, int(request.GET.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = min(MAX_PAGE_SIZE, max(1, int(request.GET.get('page_size', DEFAULT_PAGE_SIZE))))
+    except (TypeError, ValueError):
+        page_size = DEFAULT_PAGE_SIZE
+
+    id_name_pairs = list(qs.values_list('id', 'nomgd__new_name'))
+    id_name_pairs.sort(key=lambda t: (_protein_sort_key(t[1]), t[0]))
+    total = len(id_name_pairs)
+    start = (page - 1) * page_size
+    page_ids = [pid for pid, _ in id_name_pairs[start:start + page_size]]
+    meta = {'total': total, 'page': page, 'page_size': page_size}
+
+    # Fetch the page rows by id, preserving sorted order.
+    page_rows = {
+        p.id: p for p in
+        PolymerData.objects.using(MITO).select_related('strain', 'nomgd').filter(id__in=page_ids)
+    }
+    page_qs = [page_rows[pid] for pid in page_ids if pid in page_rows]
 
     # Pull metadata for the page in one extra query (OneToMany in principle, 1:1 in practice).
-    page_ids = [p.id for p in page_qs]
     meta_by_pdata = {}
     if page_ids:
         for m in PolymerMetadata.objects.using(MITO).filter(pdata_id__in=page_ids).values(
@@ -289,13 +329,15 @@ def organisms_api(request):
     page_qs, meta = _paginate(qs, request)
     page_strain_ids = [s.strain_id for s in page_qs]
 
-    # Protein count per strain (honors the same filters via pd_qs).
-    counts = dict(
+    # Sequence count + distinct ribosomal-protein count per strain
+    # (one query, honors the same filters via pd_qs).
+    count_rows = (
         pd_qs.filter(strain_id__in=page_strain_ids)
              .values('strain_id')
-             .annotate(n=Count('id'))
-             .values_list('strain_id', 'n')
+             .annotate(n=Count('id'), n_proteins=Count('nomgd_id', distinct=True))
     )
+    counts          = {r['strain_id']: r['n']           for r in count_rows}
+    unique_proteins = {r['strain_id']: r['n_proteins']  for r in count_rows}
 
     # Aggregate tag sets per strain: which origins / prediction types /
     # data locations are represented. One query, small result set.
@@ -322,6 +364,7 @@ def organisms_api(request):
         'strain_id': s.strain_id,
         'name': s.name,
         'protein_count': counts.get(s.strain_id, 0),
+        'unique_protein_count': unique_proteins.get(s.strain_id, 0),
         'origins':            sorted(tags[s.strain_id]['origins']),
         'prediction_types':   sorted(tags[s.strain_id]['prediction_types']),
         'data_locations':     sorted(tags[s.strain_id]['data_locations']),
@@ -347,8 +390,8 @@ def proteins_for_taxgroups_api(request):
         strain_ids = _expand_taxgroups_to_strains(taxgroup_ids)
         pd_qs = pd_qs.filter(strain_id__in=strain_ids)
     names = sorted(
-        n for n in pd_qs.values_list('nomgd__new_name', flat=True).distinct()
-        if n
+        (n for n in pd_qs.values_list('nomgd__new_name', flat=True).distinct() if n),
+        key=_protein_sort_key,
     )
     return JsonResponse({'results': names})
 

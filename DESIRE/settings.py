@@ -216,7 +216,30 @@ COMPRESS_PRECOMPILERS = (
 )
 COMPRESS_ENABLED = True
 
-STATIC_ROOT = '/home/RiboVision3/static/'
-STATIC_URL = '/static/'
+# ---------------------------------------------------------------------------
+# Environment switch (dev vs prod).
+#
+# Single env var DJANGO_ENV controls:
+#   - APP_PREFIX:  URL prefix the Vue app fetches under, and that Django's
+#                  reverse() prepends via FORCE_SCRIPT_NAME.
+#   - STATIC_DIR:  filesystem root for anything backend code reads/writes.
+#                  Currently a stub — wired up so future file-serving views
+#                  have one place to look.
+#   - STATIC_URL / STATIC_ROOT: served by nginx in prod under the prefix.
+# ---------------------------------------------------------------------------
+DJANGO_ENV = os.environ.get('DJANGO_ENV', 'dev')
+IS_PROD    = DJANGO_ENV == 'prod'
+
+APP_PREFIX = '/mtProts' if IS_PROD else ''
+STATIC_DIR = '/var/www/mito_ribo_proteins_db' if IS_PROD else BASE_DIR
+
+if IS_PROD:
+    FORCE_SCRIPT_NAME = APP_PREFIX
+    STATIC_URL  = f'{APP_PREFIX}/static/'
+    STATIC_ROOT = f'{STATIC_DIR}/static/'
+else:
+    STATIC_URL  = '/static/'
+    STATIC_ROOT = '/home/RiboVision3/static/'
+
 COMPRESS_ROOT = 'static/'
 DATA_UPLOAD_MAX_MEMORY_SIZE = 80*1024**2

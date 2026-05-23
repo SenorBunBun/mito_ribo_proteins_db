@@ -34,26 +34,6 @@
         <!-- Sequences mode filters -->
         <template v-if="activeMode === 'sequences'">
           <div class="filter-group">
-            <label class="filter-label">Evolutionary origin</label>
-            <div class="segmented">
-              <button
-                v-for="v in originValues"
-                :key="v.value || 'both'"
-                type="button"
-                class="seg"
-                :class="{ active: sequenceFilters.evolutionary_origin === v.value }"
-                @click="setSeqFilter('evolutionary_origin', v.value)"
-              >{{ v.label }}</button>
-            </div>
-          </div>
-          <div class="filter-group">
-            <label class="filter-label" for="f-prediction">Prediction type</label>
-            <select id="f-prediction" v-model="sequenceFilters.prediction_type" @change="onSeqFilterChange()">
-              <option value="">All</option>
-              <option v-for="v in filterOptions.prediction_type" :key="v" :value="v">{{ v }}</option>
-            </select>
-          </div>
-          <div class="filter-group">
             <label class="filter-label" for="f-name">Protein name</label>
             <select id="f-name" v-model="sequenceFilters.protein_name" @change="onSeqFilterChange()">
               <option value="">All</option>
@@ -79,6 +59,20 @@
             <select id="f-dataloc" v-model="sequenceFilters.data_location" @change="onSeqFilterChange()">
               <option value="">All</option>
               <option v-for="v in filterOptions.data_location" :key="v" :value="v">{{ v }}</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label" for="f-origin">Evolutionary origin</label>
+            <select id="f-origin" v-model="sequenceFilters.evolutionary_origin" @change="onSeqFilterChange()">
+              <option value="">All</option>
+              <option v-for="v in filterOptions.evolutionary_origin" :key="v" :value="v">{{ v }}</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label" for="f-prediction">Prediction type</label>
+            <select id="f-prediction" v-model="sequenceFilters.prediction_type" @change="onSeqFilterChange()">
+              <option value="">All</option>
+              <option v-for="v in filterOptions.prediction_type" :key="v" :value="v">{{ v }}</option>
             </select>
           </div>
           <div class="filter-group filter-tree">
@@ -111,26 +105,6 @@
              to strains that have at least one matching protein). -->
         <template v-if="activeMode === 'organisms'">
           <div class="filter-group">
-            <label class="filter-label">Evolutionary origin</label>
-            <div class="segmented">
-              <button
-                v-for="v in originValues"
-                :key="v.value || 'both'"
-                type="button"
-                class="seg"
-                :class="{ active: organismFilters.evolutionary_origin === v.value }"
-                @click="setOrgFilter('evolutionary_origin', v.value)"
-              >{{ v.label }}</button>
-            </div>
-          </div>
-          <div class="filter-group">
-            <label class="filter-label" for="o-prediction">Prediction type</label>
-            <select id="o-prediction" v-model="organismFilters.prediction_type" @change="onOrgFilterChange()">
-              <option value="">All</option>
-              <option v-for="v in filterOptions.prediction_type" :key="v" :value="v">{{ v }}</option>
-            </select>
-          </div>
-          <div class="filter-group">
             <label class="filter-label" for="o-name">Protein name</label>
             <select id="o-name" v-model="organismFilters.protein_name" @change="onOrgFilterChange()">
               <option value="">All</option>
@@ -156,6 +130,20 @@
             <select id="o-dataloc" v-model="organismFilters.data_location" @change="onOrgFilterChange()">
               <option value="">All</option>
               <option v-for="v in filterOptions.data_location" :key="v" :value="v">{{ v }}</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label" for="o-origin">Evolutionary origin</label>
+            <select id="o-origin" v-model="organismFilters.evolutionary_origin" @change="onOrgFilterChange()">
+              <option value="">All</option>
+              <option v-for="v in filterOptions.evolutionary_origin" :key="v" :value="v">{{ v }}</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label" for="o-prediction">Prediction type</label>
+            <select id="o-prediction" v-model="organismFilters.prediction_type" @change="onOrgFilterChange()">
+              <option value="">All</option>
+              <option v-for="v in filterOptions.prediction_type" :key="v" :value="v">{{ v }}</option>
             </select>
           </div>
           <div class="filter-group filter-tree">
@@ -280,7 +268,8 @@
           <thead>
             <tr>
               <th>Organism</th>
-              <th>Proteins</th>
+              <th>Number of Sequences</th>
+              <th>Number of ribosomal Proteins</th>
               <th>Origins</th>
               <th></th>
               <th class="action-col"></th>
@@ -290,6 +279,7 @@
             <tr v-for="r in results" :key="r.strain_id">
               <td>{{ r.name }}</td>
               <td class="mono">{{ r.protein_count }}</td>
+              <td class="mono">{{ r.unique_protein_count }}</td>
               <td class="tags-cell">
                 <span v-for="o in r.origins || []" :key="o" class="tag">{{ o }}</span>
                 <span v-if="!(r.origins || []).length" class="muted">—</span>
@@ -403,12 +393,6 @@ const MODES = [
   { id: 'alignments', label: 'Alignments' },
 ];
 
-const ORIGIN_VALUES = [
-  { label: 'Both',         value: ''             },
-  { label: 'Mitochondria', value: 'mitochondria' },
-  { label: 'Plastid',      value: 'plastid'      },
-];
-
 const EMPTY_FILTER_OPTIONS = {
   prediction_type: [],
   evolutionary_origin: [],
@@ -426,12 +410,12 @@ export default {
     return {
       ...initialState(),
       modes: MODES,
-      originValues: ORIGIN_VALUES,
       filterOptions: { ...EMPTY_FILTER_OPTIONS },
       openTaxIds: [],
       selectedAlignment: null,
       taxSearch: '',
       simplifyTree: true,            // hide 'clade' rows by default
+      apiBase: (typeof window !== 'undefined' && window.APP_PREFIX) || '',
       _fetchTimer: null,
     };
   },
@@ -536,17 +520,7 @@ export default {
       this.selectedAlignment = null;
       this.fetchResults();
     },
-    setSeqFilter(key, value) {
-      this.sequenceFilters[key] = value;
-      this.page = 1;
-      this.fetchResults();
-    },
     onSeqFilterChange() {
-      this.page = 1;
-      this.fetchResults();
-    },
-    setOrgFilter(key, value) {
-      this.organismFilters[key] = value;
       this.page = 1;
       this.fetchResults();
     },
@@ -567,7 +541,7 @@ export default {
     },
     async loadFilterOptions() {
       try {
-        const res = await fetch('/api/filter-options/');
+        const res = await fetch(`${this.apiBase}/api/filter-options/`);
         if (!res.ok) throw new Error(`filter-options HTTP ${res.status}`);
         const data = await res.json();
         this.filterOptions = { ...EMPTY_FILTER_OPTIONS, ...data };
@@ -582,7 +556,7 @@ export default {
     async loadTaxTree() {
       this.taxTreeLoading = true;
       try {
-        const res = await fetch('/api/taxtree/');
+        const res = await fetch(`${this.apiBase}/api/taxtree/`);
         if (!res.ok) throw new Error(`taxtree HTTP ${res.status}`);
         this.taxTree = await res.json();
         // Open the root node by default.
@@ -622,7 +596,7 @@ export default {
           organisms: '/api/organisms/',
           alignments: '/api/alignments/',
         }[this.activeMode];
-        const res = await fetch(`${endpoint}?${this.buildQuery()}`);
+        const res = await fetch(`${this.apiBase}${endpoint}?${this.buildQuery()}`);
         if (!res.ok) throw new Error(`${this.activeMode} HTTP ${res.status}`);
         const data = await res.json();
         this.results = data.results || [];
@@ -641,7 +615,7 @@ export default {
     async openDetail(pdataId) {
       this.detailLoading = true;
       try {
-        const res = await fetch(`/api/sequences/${pdataId}/`);
+        const res = await fetch(`${this.apiBase}/api/sequences/${pdataId}/`);
         if (!res.ok) throw new Error(`detail HTTP ${res.status}`);
         this.selectedDetail = await res.json();
       } catch (e) {
@@ -947,35 +921,6 @@ export default {
 .filter-group select:disabled {
   background-color: var(--bg);
   cursor: not-allowed;
-}
-
-/* Segmented toggle (evolutionary origin) */
-.segmented {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
-  overflow: hidden;
-  background: var(--surface);
-}
-.seg {
-  background: transparent;
-  border: none;
-  padding: 7px 8px;
-  font-family: var(--font-body);
-  font-size: 12px;
-  color: var(--ink-subtle);
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-  border-right: 1px solid var(--line-strong);
-}
-.seg:last-child { border-right: none; }
-.seg:hover:not(.active) { background: var(--purple-tint); color: var(--ink); }
-.seg.active {
-  background: var(--purple-tint);
-  color: var(--purple-ink);
-  font-weight: 600;
 }
 
 /* Step number bubble (Alignments sidebar) */

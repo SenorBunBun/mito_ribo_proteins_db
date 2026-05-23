@@ -16,7 +16,8 @@ export default function MsaViewerPanel({ alnId, taxGroupId, name, onClose }) {
     setSeqs(null);
     setError(null);
     const tg = taxGroupId || 0;
-    fetch(`/api/alignments/${alnId}/${tg}/fasta/`)
+    const apiBase = (typeof window !== 'undefined' && window.APP_PREFIX) || '';
+    fetch(`${apiBase}/api/alignments/${alnId}/${tg}/fasta/`)
       .then((r) => {
         if (!r.ok) throw new Error(`fasta HTTP ${r.status}`);
         return r.json();
