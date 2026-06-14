@@ -215,23 +215,18 @@
           <div class="filter-group" :class="{ disabled: !crossFilters.taxgroup_ids.length }">
             <label class="filter-label" for="a-name">
               <span class="step-num">2</span> Protein
-              <span v-if="crossFilters.taxgroup_ids.length" class="muted small">
-                ({{ alignmentProteinOptions.length }} available)
-              </span>
             </label>
             <select
               id="a-name"
-              :key="'aln-pro-' + alignmentProteinOptions.length"
               v-model="alignmentFilters.protein_name"
               :disabled="!crossFilters.taxgroup_ids.length"
               @change="onAlnFilterChange()"
             >
               <option value="">
                 <template v-if="!crossFilters.taxgroup_ids.length">Select an organism first</template>
-                <template v-else-if="!alignmentProteinOptions.length">Loading…</template>
                 <template v-else>All available</template>
               </option>
-              <option v-for="v in alignmentProteinOptions" :key="v" :value="v">{{ v }}</option>
+              <option v-for="v in filterOptions.protein_names" :key="v" :value="v">{{ v }}</option>
             </select>
           </div>
         </template>
@@ -381,20 +376,25 @@
         </div>
       </aside>
 
-      <aside v-if="activeMode === 'alignments' && selectedAlignment" class="detail">
-        <header class="detail-header">
-          <h3>{{ selectedAlignment.name }}</h3>
-          <button type="button" class="close-btn" @click="selectedAlignment = null" aria-label="Close">×</button>
+      <div
+        v-show="activeMode === 'alignments' && selectedAlignment"
+        class="msa-overlay"
+      >
+        <header class="msa-overlay-header">
+          <h3>{{ selectedAlignment && selectedAlignment.name }}</h3>
+          <button type="button" class="close-btn msa-close-btn" @click.stop="closeMsa" aria-label="Close">×</button>
         </header>
-        <!-- Intentionally empty: MSA viewer wiring is phase 2 (see README). -->
-        <div class="muted empty">Alignment detail view is under construction.</div>
-      </aside>
+        <div ref="msaMount" class="msa-mount" @mousedown="msaDragStart"></div>
+      </div>
     </main>
   </div>
 </template>
 
 <script>
+import React from 'react';
+import ReactDOM from 'react-dom';
 import TaxTree from './TaxTree.vue';
+import MsaViewer from './MsaViewer.js';
 import initialState from './MainPageVars.js';
 
 const MODES = [
@@ -428,13 +428,11 @@ export default {
       modes: MODES,
       originValues: ORIGIN_VALUES,
       filterOptions: { ...EMPTY_FILTER_OPTIONS },
-      alignmentProteinOptions: [],   // populated from /api/proteins-for-taxgroups/
       openTaxIds: [],
       selectedAlignment: null,
       taxSearch: '',
       simplifyTree: true,            // hide 'clade' rows by default
       _fetchTimer: null,
-      alignmentProteinsReqId: 0,
     };
   },
   computed: {
@@ -517,16 +515,18 @@ export default {
     this.loadFilterOptions();
     this.loadTaxTree();
     this.fetchResults();
+    window.addEventListener('keydown', this.onMsaKeydown);
   },
   watch: {
-    // Any change to the taxgroup selection refreshes the Alignments-mode
-    // protein dropdown. Deep-watch so in-place array mutations still trigger.
-    crossFilters: {
-      deep: true,
-      handler() {
-        this.refreshAlignmentProteinOptions();
-      },
+    selectedAlignment(v) {
+      document.body.style.overflow = v ? 'hidden' : '';
+      this.$nextTick(() => this.renderMsa(v));
     },
+  },
+  beforeDestroy() {
+    document.body.style.overflow = '';
+    this.unmountMsa();
+    window.removeEventListener('keydown', this.onMsaKeydown);
   },
   methods: {
     setMode(modeId) {
@@ -534,9 +534,6 @@ export default {
       this.page = 1;
       this.selectedDetail = null;
       this.selectedAlignment = null;
-      // The watcher on taxgroup_ids keeps alignmentProteinOptions in sync;
-      // also refresh on every mode switch in case the options list is stale.
-      if (modeId === 'alignments') this.refreshAlignmentProteinOptions();
       this.fetchResults();
     },
     setSeqFilter(key, value) {
@@ -672,67 +669,7 @@ export default {
       this.crossFilters.taxgroup_ids = ids;
       this.crossFilters.taxgroup_labels = labels;
       this.page = 1;
-      // Direct call as a belt-and-suspenders for the deep watcher on
-      // crossFilters. If either fires the other is a cheap no-op thanks to
-      // reqId gating.
-      this.refreshAlignmentProteinOptions();
       this.fetchResults();
-    },
-    /** Refetch the protein dropdown for Alignments mode based on the
-     *  currently-selected taxgroup(s). When nothing is selected, clear it. */
-    async refreshAlignmentProteinOptions() {
-      const selected = this.crossFilters.taxgroup_ids.slice();
-      console.log('[alignments] refresh triggered. taxgroup_ids =', selected,
-                  '(labels =', this.crossFilters.taxgroup_labels, ')');
-      if (!selected.length) {
-        this.alignmentProteinOptions = [];
-        this.alignmentFilters.protein_name = '';
-        console.log('[alignments] no organisms selected → cleared protein options');
-        return;
-      }
-      const reqId = ++this.alignmentProteinsReqId;
-      const p = new URLSearchParams();
-      for (const tid of selected) p.append('taxgroup_ids[]', String(tid));
-
-      // In parallel, also fetch the filtered polymer rows themselves so the
-      // developer can inspect them in the console. Cheap (5602 max) and
-      // capped at 500/page.
-      const polymersPromise = fetch(`/mtProts/api/sequences/?${p.toString()}&page_size=500`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((j) => {
-          if (!j) return;
-          console.log(`[alignments] filtered polymers (${j.total} total, showing ${j.results.length}):`);
-          console.table(j.results.map((r) => ({
-            id: r.id,
-            protein: r.protein_name,
-            strain_id: r.strain_id,
-            strain: r.strain_name,
-            origin: r.evolutionary_origin,
-          })));
-        })
-        .catch((e) => console.error('[alignments] polymer fetch failed:', e));
-
-      try {
-        const res = await fetch(`/mtProts/api/proteins-for-taxgroups/?${p.toString()}`);
-        if (!res.ok) throw new Error(`proteins-for-taxgroups HTTP ${res.status}`);
-        const data = await res.json();
-        if (reqId !== this.alignmentProteinsReqId) {
-          console.log('[alignments] stale response, discarding');
-          return;
-        }
-        // Use $set to guarantee reactivity even if something about the
-        // property descriptor is funky.
-        this.$set(this, 'alignmentProteinOptions', data.results || []);
-        console.log(`[alignments] protein dropdown populated: ${this.alignmentProteinOptions.length} options →`,
-                    this.alignmentProteinOptions);
-        if (this.alignmentFilters.protein_name
-            && !this.alignmentProteinOptions.includes(this.alignmentFilters.protein_name)) {
-          this.alignmentFilters.protein_name = '';
-        }
-      } catch (e) {
-        console.error('[alignments] protein fetch failed:', e);
-      }
-      await polymersPromise;
     },
     pinOrganismToSequences(row) {
       this.crossFilters.taxgroup_ids = [row.strain_id];
@@ -771,6 +708,67 @@ export default {
       // Also open the target itself so its children (if any) are visible.
       toOpen.add(targetId);
       this.openTaxIds = Array.from(toOpen);
+    },
+    renderMsa(aln) {
+      const el = this.$refs.msaMount;
+      if (!el) return;
+      if (!aln) {
+        ReactDOM.unmountComponentAtNode(el);
+        return;
+      }
+      const ids = this.crossFilters.taxgroup_ids;
+      const taxGroupId = ids && ids.length ? ids.join(',') : '0';
+      ReactDOM.render(
+        React.createElement(MsaViewer, {
+          alnId: aln.aln_id,
+          taxGroupId,
+          name: aln.name,
+          onClose: this.closeMsa,
+        }),
+        el,
+      );
+    },
+    unmountMsa() {
+      const el = this.$refs.msaMount;
+      if (el) ReactDOM.unmountComponentAtNode(el);
+    },
+    closeMsa() {
+      this.selectedAlignment = null;
+      document.body.style.overflow = '';
+      this.unmountMsa();
+    },
+    onMsaKeydown(e) {
+      if (e.key === 'Escape' && this.selectedAlignment) {
+        this.closeMsa();
+      }
+    },
+    msaDragStart(e) {
+      if (e.button !== 0) return;
+      const el = this.$refs.msaMount;
+      if (!el) return;
+      this._msaDrag = {
+        startX: e.clientX,
+        startY: e.clientY,
+        scrollLeft: el.scrollLeft,
+        scrollTop: el.scrollTop,
+      };
+      el.style.cursor = 'grabbing';
+      window.addEventListener('mousemove', this.msaDragMove);
+      window.addEventListener('mouseup', this.msaDragEnd);
+      e.preventDefault();
+    },
+    msaDragMove(e) {
+      const el = this.$refs.msaMount;
+      if (!el || !this._msaDrag) return;
+      el.scrollLeft = this._msaDrag.scrollLeft - (e.clientX - this._msaDrag.startX);
+      el.scrollTop = this._msaDrag.scrollTop - (e.clientY - this._msaDrag.startY);
+    },
+    msaDragEnd() {
+      const el = this.$refs.msaMount;
+      if (el) el.style.cursor = '';
+      this._msaDrag = null;
+      window.removeEventListener('mousemove', this.msaDragMove);
+      window.removeEventListener('mouseup', this.msaDragEnd);
     },
     removeChip(chip) {
       if (chip.kind === 'taxgroup') {
@@ -1371,6 +1369,49 @@ export default {
   word-break: break-all;
   overflow-x: auto;
   letter-spacing: 0.015em;
+}
+
+/* ─── MSA OVERLAY ────────────────────────────────────── */
+.msa-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--surface, #ffffff);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+.msa-overlay-header {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.msa-close-btn {
+  position: relative;
+  z-index: 3;
+  font-size: 24px;
+  padding: 4px 12px;
+}
+.msa-overlay-header h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 20px;
+  letter-spacing: -0.012em;
+  color: var(--ink);
+}
+.msa-mount {
+  flex: 1;
+  overflow: auto;
+  padding: 0;
+  width: 100%;
+  cursor: grab;
+  user-select: none;
 }
 
 /* ─── ALIGNMENTS GUIDE STEPS ─────────────────────────── */
