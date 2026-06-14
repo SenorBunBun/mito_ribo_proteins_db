@@ -218,6 +218,43 @@
             </select>
           </div>
         </template>
+
+        <template v-if="activeMode === 'structures'">
+          <div class="filter-group">
+            <button
+              type="button"
+              class="pill-btn pill-btn-ghost"
+              :disabled="structureFilters.structure_id == null && !structureFilters.protein_name"
+              @click="resetStructureFilters"
+            >Reset filters</button>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label" for="f-structure">Structure (PDB &amp; Organism)</label>
+            <select id="f-structure" v-model="structureFilters.structure_id" @change="onStructureFilterChange()">
+              <option :value="null">All</option>
+              <option
+                v-for="s in structureOptions.structures"
+                :key="s.structure_id"
+                :value="s.structure_id"
+                :disabled="s.count === 0"
+                :class="{ 'option-disabled': s.count === 0 }"
+              >{{ s.label }} ({{ s.count }})</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label" for="f-singleton-protein">Protein name</label>
+            <select id="f-singleton-protein" v-model="structureFilters.protein_name" @change="onStructureFilterChange()">
+              <option :value="null">All</option>
+              <option
+                v-for="p in structureOptions.proteins"
+                :key="p.protein_id"
+                :value="p.protein_name"
+                :disabled="p.count === 0"
+                :class="{ 'option-disabled': p.count === 0 }"
+              >{{ p.protein_name }} ({{ p.count }})</option>
+            </select>
+          </div>
+        </template>
       </section>
     </aside>
 
@@ -363,6 +400,34 @@
         </template>
       </section>
 
+      <!-- Structure mode: chains list -->
+      <section v-if="activeMode === 'structures'" class="results">
+        <table class="results-table" v-if="results.length">
+          <thead>
+            <tr>
+              <th>Protein</th>
+              <th>PDB</th>
+              <th>Organism</th>
+              <th>Chain</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="r in results"
+              :key="r.id"
+              @click="openChainDetail(r)"
+              :class="{ selected: selectedChain && selectedChain.id === r.id }"
+            >
+              <td class="mono">{{ r.protein_name || '—' }}</td>
+              <td class="mono">{{ r.pdb_id }}</td>
+              <td>{{ r.organism_name }}</td>
+              <td class="mono">{{ r.chain_name }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-else-if="!loading" class="muted empty">No chains match the current filters.</div>
+      </section>
+
       <!-- Pagination -->
       <nav v-if="totalPages > 1" class="pagination">
         <button type="button" :disabled="page <= 1" @click="goPage(page - 1)">Previous</button>
@@ -396,6 +461,26 @@
         </div>
       </aside>
 
+      <aside v-if="activeMode === 'structures' && selectedChain" class="detail detail-structure">
+        <header class="detail-header">
+          <h3>3D Structure Viewer</h3>
+          <button type="button" class="close-btn" @click="selectedChain = null" aria-label="Close">×</button>
+        </header>
+        <div class="viewer-placeholder">
+          <div class="viewer-stub">
+            <div class="viewer-stub-icon">◳</div>
+            <div class="viewer-stub-headline">Still in Development</div>
+            <div class="viewer-stub-sub">An interactive 3D viewer for the selected chain is coming soon.</div>
+          </div>
+        </div>
+        <dl class="kv kv-compact">
+          <dt>PDB</dt><dd class="mono">{{ selectedChain.pdb_id }}</dd>
+          <dt>Organism</dt><dd>{{ selectedChain.organism_name }}</dd>
+          <dt>Protein</dt><dd class="mono">{{ selectedChain.protein_name }}</dd>
+          <dt>Chain</dt><dd class="mono">{{ selectedChain.chain_name }}</dd>
+        </dl>
+      </aside>
+
       <div
         v-show="activeMode === 'alignments' && selectedAlignment"
         class="msa-overlay"
@@ -426,6 +511,7 @@ const MODES = [
   { id: 'sequences',  label: 'Sequences'  },
   { id: 'organisms',  label: 'Organisms'  },
   { id: 'alignments', label: 'Alignments' },
+  { id: 'structures', label: 'Structure'   },
 ];
 
 const EMPTY_FILTER_OPTIONS = {
@@ -459,6 +545,10 @@ export default {
       selectedSeqIds: [],
       selectedAlnIds: [],
       selectAllMode: false,
+      // Structure tab
+      structureFilters: { structure_id: null, protein_name: null },
+      structureOptions: { structures: [], proteins: [] },
+      selectedChain: null,
       _fetchTimer: null,
     };
   },
@@ -573,7 +663,9 @@ export default {
       this.page = 1;
       this.selectedDetail = null;
       this.selectedAlignment = null;
+      this.selectedChain = null;
       this.clearSeqSelection();
+      if (modeId === 'structures') this.fetchStructureOptions();
       this.fetchResults();
     },
     clearSeqSelection() {
@@ -692,6 +784,10 @@ export default {
         if (this.crossFilters.protein_name && !f.protein_name) p.set('protein_name', this.crossFilters.protein_name);
       } else if (this.activeMode === 'alignments') {
         if (this.alignmentFilters.protein_name) p.set('protein_name', this.alignmentFilters.protein_name);
+      } else if (this.activeMode === 'structures') {
+        const f = this.structureFilters;
+        if (f.structure_id != null && f.structure_id !== '') p.set('structure_id', String(f.structure_id));
+        if (f.protein_name) p.set('protein_name', f.protein_name);
       }
       return p.toString();
     },
@@ -703,6 +799,7 @@ export default {
           sequences: '/api/sequences/',
           organisms: '/api/organisms/',
           alignments: '/api/alignments/',
+          structures: '/api/structures/chains/',
         }[this.activeMode];
         const res = await fetch(`${this.apiBase}${endpoint}?${this.buildQuery()}`);
         if (!res.ok) throw new Error(`${this.activeMode} HTTP ${res.status}`);
@@ -719,6 +816,32 @@ export default {
       } finally {
         this.loading = false;
       }
+    },
+    async fetchStructureOptions() {
+      try {
+        const p = new URLSearchParams();
+        const f = this.structureFilters;
+        if (f.structure_id != null && f.structure_id !== '') p.set('structure_id', String(f.structure_id));
+        if (f.protein_name) p.set('protein_name', f.protein_name);
+        const res = await fetch(`${this.apiBase}/api/structures/filter-options/?${p.toString()}`);
+        if (!res.ok) throw new Error(`structure-options HTTP ${res.status}`);
+        this.structureOptions = await res.json();
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    onStructureFilterChange() {
+      this.page = 1;
+      this.selectedChain = null;
+      this.fetchStructureOptions();
+      this.fetchResults();
+    },
+    resetStructureFilters() {
+      this.structureFilters = { structure_id: null, protein_name: null };
+      this.onStructureFilterChange();
+    },
+    openChainDetail(row) {
+      this.selectedChain = row;
     },
     async openDetail(pdataId) {
       this.detailLoading = true;
@@ -896,7 +1019,7 @@ export default {
   --font-mono:    'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 360px 1fr;
   min-height: 100vh;
   background: var(--bg);
   color: var(--ink);
@@ -947,7 +1070,7 @@ export default {
 /* ─── MODE SWITCHER ──────────────────────────────────────── */
 .mode-switcher {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(4, 1fr);
   padding: 3px;
   background: var(--purple-tint);
   border-radius: 7px;
@@ -956,9 +1079,10 @@ export default {
   appearance: none;
   background: transparent;
   border: none;
-  padding: 8px 6px;
+  padding: 8px 4px;
   font-family: var(--font-body);
-  font-size: 12.5px;
+  font-size: 11.5px;
+  white-space: nowrap;
   font-weight: 500;
   letter-spacing: 0.005em;
   color: var(--ink-subtle);
@@ -1026,6 +1150,7 @@ export default {
   border-color: var(--purple-deep);
   box-shadow: 0 0 0 3px var(--purple-tint);
 }
+.filter-group select option.option-disabled { color: #b9b5c5; }
 .filter-group.disabled { opacity: 0.5; }
 .filter-group select:disabled {
   background-color: var(--bg);
@@ -1512,4 +1637,45 @@ export default {
   line-height: 1.65;
 }
 .guide-step:first-child { margin-top: 12px; }
+
+/* ─── STRUCTURE DETAIL / 3D VIEWER PLACEHOLDER ─────────── */
+.detail-structure .detail-header h3 {
+  font-family: var(--font-display);
+  font-size: 19px;
+  letter-spacing: -0.015em;
+}
+.viewer-placeholder {
+  margin: 18px 0 20px;
+  border: 1.5px dashed var(--purple);
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--purple-tint) 0%, #ffffff 100%);
+  padding: 40px 28px;
+  text-align: center;
+}
+.viewer-stub-icon {
+  font-size: 44px;
+  line-height: 1;
+  color: var(--purple-deep);
+  opacity: 0.55;
+  margin-bottom: 14px;
+}
+.viewer-stub-headline {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 22px;
+  letter-spacing: -0.015em;
+  color: var(--purple-deep);
+  margin-bottom: 8px;
+}
+.viewer-stub-sub {
+  font-size: 13px;
+  color: var(--ink-subtle);
+  max-width: 320px;
+  margin: 0 auto;
+  line-height: 1.55;
+}
+.kv-compact {
+  font-size: 12.5px;
+  opacity: 0.85;
+}
 </style>

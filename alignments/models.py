@@ -106,6 +106,37 @@ class Species(models.Model):
         db_table = 'Species'
 
 
+class SingletonProtein(models.Model):
+    protein_id = models.SmallIntegerField(primary_key=True)
+    protein_name = models.CharField(max_length=20, unique=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Singleton_Protein'
+
+
+class SingletonStructure(models.Model):
+    structure_id = models.SmallIntegerField(primary_key=True)
+    pdb_id = models.CharField(max_length=4, unique=True)
+    organism_name = models.CharField(max_length=100, unique=True)
+    abbreviation = models.CharField(max_length=10, blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Singleton_Structure'
+
+
+class SingletonProteinChain(models.Model):
+    id = models.AutoField(primary_key=True)
+    protein = models.ForeignKey(SingletonProtein, models.DO_NOTHING, db_column='protein_id', related_name='chains')
+    structure = models.ForeignKey(SingletonStructure, models.DO_NOTHING, db_column='structure_id', related_name='chains')
+    chain_name = models.CharField(max_length=10)
+
+    class Meta:
+        managed = False
+        db_table = 'Singleton_Protein_Chain'
+
+
 class Taxgroups(models.Model):
     taxgroup_id = models.IntegerField(primary_key=True)
     grouplevel = models.CharField(db_column='groupLevel', max_length=45, blank=True, null=True)

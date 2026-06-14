@@ -24,6 +24,9 @@ from alignments.models import (
     PolymerData,
     PolymerMetadata,
     Residues,
+    SingletonProtein,
+    SingletonProteinChain,
+    SingletonStructure,
     Species,
     Taxgroups,
 )
@@ -746,3 +749,126 @@ def alignment_zip_api(request, aln_id, tax_group):
         resp['Content-Disposition'] = f'attachment; filename="{protein}_filtered.fasta"'
         return resp
     return _zip_response(by_protein, f'alignment_{aln_id}.zip')
+
+
+# --------------------------------------------------------------------------
+# Structure tab (Singleton_* tables)
+
+def _chain_filters(request):
+    sid_raw = (request.GET.get('structure_id') or '').strip()
+    structure_id = int(sid_raw) if sid_raw.isdigit() else None
+    protein_name = (request.GET.get('protein_name') or '').strip() or None
+    return structure_id, protein_name
+
+
+def structure_filter_options_api(request):
+    """Return both dropdown payloads with co-narrowed counts.
+
+    The Structure dropdown's counts are computed against chains filtered by
+    the *protein_name* only; the Protein dropdown's counts against chains
+    filtered by *structure_id* only. Zero-count options stay in the payload
+    so the frontend can grey them out."""
+    structure_id, protein_name = _chain_filters(request)
+
+    base = SingletonProteinChain.objects.using(MITO).all()
+
+    struct_qs = base
+    if protein_name:
+        struct_qs = struct_qs.filter(protein__protein_name=protein_name)
+    struct_counts = dict(
+        struct_qs.values_list('structure_id').annotate(c=Count('id'))
+    )
+    struct_rows = list(
+        SingletonStructure.objects.using(MITO).all().order_by('pdb_id')
+        .values('structure_id', 'pdb_id', 'organism_name', 'abbreviation')
+    )
+    structures = [
+        {
+            'structure_id':  r['structure_id'],
+            'pdb_id':        r['pdb_id'],
+            'organism_name': r['organism_name'],
+            'abbreviation':  r['abbreviation'],
+            'label':         f"{r['pdb_id']} — {r['organism_name']}",
+            'count':         int(struct_counts.get(r['structure_id'], 0)),
+        }
+        for r in struct_rows
+    ]
+
+    prot_qs = base
+    if structure_id:
+        prot_qs = prot_qs.filter(structure_id=structure_id)
+    prot_counts = dict(
+        prot_qs.values_list('protein_id').annotate(c=Count('id'))
+    )
+    prot_rows = list(
+        SingletonProtein.objects.using(MITO).all()
+        .values('protein_id', 'protein_name')
+    )
+    proteins = [
+        {
+            'protein_id':   r['protein_id'],
+            'protein_name': r['protein_name'],
+            'count':        int(prot_counts.get(r['protein_id'], 0)),
+        }
+        for r in prot_rows
+    ]
+    proteins.sort(key=lambda p: _protein_sort_key(p['protein_name']))
+
+    return JsonResponse({'structures': structures, 'proteins': proteins})
+
+
+def chains_api(request):
+    """Paginated list of Singleton_Protein_Chain rows, sorted S->L by protein
+    then by PDB id then by chain_name."""
+    structure_id, protein_name = _chain_filters(request)
+
+    qs = SingletonProteinChain.objects.using(MITO).select_related('protein', 'structure')
+    if structure_id:
+        qs = qs.filter(structure_id=structure_id)
+    if protein_name:
+        qs = qs.filter(protein__protein_name=protein_name)
+
+    rows = list(qs.values(
+        'id', 'chain_name',
+        'protein__protein_name',
+        'structure__structure_id', 'structure__pdb_id',
+        'structure__organism_name', 'structure__abbreviation',
+    ))
+    rows.sort(key=lambda r: (
+        _protein_sort_key(r['protein__protein_name']),
+        r['structure__pdb_id'] or '',
+        r['chain_name'] or '',
+    ))
+
+    try:
+        page = max(1, int(request.GET.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(request.GET.get('page_size', DEFAULT_PAGE_SIZE))
+    except (TypeError, ValueError):
+        page_size = DEFAULT_PAGE_SIZE
+    page_size = max(1, min(page_size, MAX_PAGE_SIZE))
+
+    total = len(rows)
+    start = (page - 1) * page_size
+    page_rows = rows[start:start + page_size]
+
+    results = [
+        {
+            'id':            r['id'],
+            'chain_name':    r['chain_name'],
+            'protein_name':  r['protein__protein_name'],
+            'structure_id':  r['structure__structure_id'],
+            'pdb_id':        r['structure__pdb_id'],
+            'organism_name': r['structure__organism_name'],
+            'abbreviation':  r['structure__abbreviation'],
+        }
+        for r in page_rows
+    ]
+    return JsonResponse({
+        'results': results,
+        'total': total,
+        'page': page,
+        'page_size': page_size,
+    })
