@@ -262,6 +262,8 @@ def sequences_api(request):
             'prediction_type': md.get('prediction_type'),
             'evolutionary_origin': md.get('evolutionary_origin'),
             'assembly': md.get('assembly'),
+            'sequence_location': md.get('sequence_location'),
+            'assembly_location': md.get('assembly_location'),
             'alternate_name': md.get('alternate_name'),
         })
 
