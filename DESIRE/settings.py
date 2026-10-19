@@ -32,7 +32,7 @@ DEBUG = True
 ALLOWED_HOSTS = []
 SECRET_KEY = config['SECRET_KEY']
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DJANGO_ENV', 'prod') != 'prod'
 
 ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '130.207.36.76','apollo2.chemistry.gatech.edu','ribovision2.chemistry.gatech.edu','[::1]']
 
