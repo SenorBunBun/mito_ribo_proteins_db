@@ -348,7 +348,9 @@ def getAlignmentsFilterByProteinTypeAndTaxIdsDirect(request, concatenatedProtein
     return JsonResponse(context)
 
 def index(request):
-    return render(request, 'alignments/index.html')
+    from django.conf import settings
+    return render(request, 'alignments/index.html',
+                  {'app_prefix': getattr(settings, 'APP_PREFIX', '')})
 
 def visualizer(request, align_name, tax_group1, tax_group2, anchor_structure = ''):
     twc_api_url = "http://127.0.0.1:8000/orthologs/twc-api/" + align_name + "/" + str(tax_group1) + "/" + str(tax_group2) + "/" + anchor_structure

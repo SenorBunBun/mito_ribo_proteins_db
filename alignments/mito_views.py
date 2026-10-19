@@ -8,9 +8,12 @@ Join map:
     Polymer_Alignments.PData_id/Aln_id -> Polymer_data/Alignment
 """
 
+import io
+import re
+import zipfile
 from collections import defaultdict
 
-from django.http import JsonResponse, Http404
+from django.http import JsonResponse, Http404, HttpResponse, StreamingHttpResponse
 from django.db.models import Count, Q
 
 from alignments.models import (
@@ -21,6 +24,9 @@ from alignments.models import (
     PolymerData,
     PolymerMetadata,
     Residues,
+    SingletonProtein,
+    SingletonProteinChain,
+    SingletonStructure,
     Species,
     Taxgroups,
 )
@@ -28,6 +34,20 @@ from alignments.models import (
 MITO = 'mito'
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 500
+
+
+_PROT_RE = re.compile(r'^([A-Za-z]?)([SL])(\d+)(.*)$', re.IGNORECASE)
+
+def _protein_sort_key(name):
+    # Ribosomal-protein order: S-series first ascending, then L-series
+    # ascending, then anything else alphabetic. Matches names like
+    # 'S1', 'mS39', 'uS02m', 'bL07m', 'mL38'.
+    m = _PROT_RE.match(name or '')
+    if not m:
+        return (2, 0, '', name or '')
+    prefix, letter, num, rest = m.group(1), m.group(2).upper(), int(m.group(3)), m.group(4)
+    bucket = 0 if letter == 'S' else 1
+    return (bucket, num, prefix.lower(), rest.lower())
 
 
 # --------------------------------------------------------------------------
@@ -110,7 +130,8 @@ def filter_options_api(request):
         'sequence_location':   distinct(PolymerMetadata, 'sequence_location'),
         'assembly_location':   distinct(PolymerMetadata, 'assembly_location'),
         'data_location':       distinct(PolymerMetadata, 'data_location'),
-        'protein_names':       distinct(Nomenclature,    'new_name'),
+        'protein_names':       sorted(distinct(Nomenclature, 'new_name'),
+                                       key=_protein_sort_key),
     })
 
 
@@ -192,10 +213,34 @@ def _build_sequences_qs(request):
 
 def sequences_api(request):
     qs = _build_sequences_qs(request)
-    page_qs, meta = _paginate(qs, request)
+
+    # Order by ribosomal-protein convention (S-series ascending, then L-series
+    # ascending, then anything else). Sort key is Python-side, so materialize
+    # (id, new_name) for all matching rows, sort, then page in Python.
+    try:
+        page = max(1, int(request.GET.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = min(MAX_PAGE_SIZE, max(1, int(request.GET.get('page_size', DEFAULT_PAGE_SIZE))))
+    except (TypeError, ValueError):
+        page_size = DEFAULT_PAGE_SIZE
+
+    id_name_pairs = list(qs.values_list('id', 'nomgd__new_name'))
+    id_name_pairs.sort(key=lambda t: (_protein_sort_key(t[1]), t[0]))
+    total = len(id_name_pairs)
+    start = (page - 1) * page_size
+    page_ids = [pid for pid, _ in id_name_pairs[start:start + page_size]]
+    meta = {'total': total, 'page': page, 'page_size': page_size}
+
+    # Fetch the page rows by id, preserving sorted order.
+    page_rows = {
+        p.id: p for p in
+        PolymerData.objects.using(MITO).select_related('strain', 'nomgd').filter(id__in=page_ids)
+    }
+    page_qs = [page_rows[pid] for pid in page_ids if pid in page_rows]
 
     # Pull metadata for the page in one extra query (OneToMany in principle, 1:1 in practice).
-    page_ids = [p.id for p in page_qs]
     meta_by_pdata = {}
     if page_ids:
         for m in PolymerMetadata.objects.using(MITO).filter(pdata_id__in=page_ids).values(
@@ -240,6 +285,66 @@ def sequence_detail_api(request, pdata_id):
         'strain_name': p.strain.name if p.strain_id else None,
         'metadata': metas,
     })
+
+
+# --------------------------------------------------------------------------
+# /api/sequences/fasta/
+
+def _parse_id_list(raw):
+    out = []
+    for part in (raw or '').split(','):
+        part = part.strip()
+        if part.isdigit():
+            out.append(int(part))
+    return out
+
+
+def download_fasta_api(request):
+    """Stream a FASTA of the rows matching the current filters.
+
+    Accepts the same filter params as sequences_api plus optional
+    `ids=` (whitelist) and `exclude_ids=` (blacklist) — both
+    intersected with the filter set so the user can only download
+    rows they could see.
+
+    Header format: >{protein}_{strain_abbreviation}|{protein_location_header}
+    """
+    qs = _build_sequences_qs(request)
+
+    ids = _parse_id_list(request.GET.get('ids'))
+    if ids:
+        qs = qs.filter(id__in=ids)
+    excl = _parse_id_list(request.GET.get('exclude_ids'))
+    if excl:
+        qs = qs.exclude(id__in=excl)
+
+    rows = list(qs.values(
+        'id', 'protein_location_header',
+        'nomgd__new_name', 'strain_id', 'strain__abbreviation',
+    ))
+    row_ids = [r['id'] for r in rows]
+    seqs = dict(
+        PolymerMetadata.objects.using(MITO)
+            .filter(pdata_id__in=row_ids)
+            .values_list('pdata_id', 'fullseq')
+    )
+
+    def fasta_gen():
+        for r in rows:
+            seq = (seqs.get(r['id']) or '').strip()
+            if not seq:
+                continue
+            protein = (r['nomgd__new_name'] or 'unknown').strip()
+            abbr    = (r['strain__abbreviation'] or 'unknown').strip()
+            header  = (r['protein_location_header'] or '').strip()
+            sid     = r['strain_id']
+            yield f">{protein}_{sid}.0_{abbr}|{header}\n"
+            for i in range(0, len(seq), 60):
+                yield seq[i:i+60] + '\n'
+
+    resp = StreamingHttpResponse(fasta_gen(), content_type='text/x-fasta; charset=utf-8')
+    resp['Content-Disposition'] = 'attachment; filename="sequences.fasta"'
+    return resp
 
 
 # --------------------------------------------------------------------------
@@ -289,13 +394,15 @@ def organisms_api(request):
     page_qs, meta = _paginate(qs, request)
     page_strain_ids = [s.strain_id for s in page_qs]
 
-    # Protein count per strain (honors the same filters via pd_qs).
-    counts = dict(
+    # Sequence count + distinct ribosomal-protein count per strain
+    # (one query, honors the same filters via pd_qs).
+    count_rows = (
         pd_qs.filter(strain_id__in=page_strain_ids)
              .values('strain_id')
-             .annotate(n=Count('id'))
-             .values_list('strain_id', 'n')
+             .annotate(n=Count('id'), n_proteins=Count('nomgd_id', distinct=True))
     )
+    counts          = {r['strain_id']: r['n']           for r in count_rows}
+    unique_proteins = {r['strain_id']: r['n_proteins']  for r in count_rows}
 
     # Aggregate tag sets per strain: which origins / prediction types /
     # data locations are represented. One query, small result set.
@@ -322,6 +429,7 @@ def organisms_api(request):
         'strain_id': s.strain_id,
         'name': s.name,
         'protein_count': counts.get(s.strain_id, 0),
+        'unique_protein_count': unique_proteins.get(s.strain_id, 0),
         'origins':            sorted(tags[s.strain_id]['origins']),
         'prediction_types':   sorted(tags[s.strain_id]['prediction_types']),
         'data_locations':     sorted(tags[s.strain_id]['data_locations']),
@@ -347,8 +455,8 @@ def proteins_for_taxgroups_api(request):
         strain_ids = _expand_taxgroups_to_strains(taxgroup_ids)
         pd_qs = pd_qs.filter(strain_id__in=strain_ids)
     names = sorted(
-        n for n in pd_qs.values_list('nomgd__new_name', flat=True).distinct()
-        if n
+        (n for n in pd_qs.values_list('nomgd__new_name', flat=True).distinct() if n),
+        key=_protein_sort_key,
     )
     return JsonResponse({'results': names})
 
@@ -390,9 +498,25 @@ def alignments_api(request):
         )
         qs = qs.filter(aln_id__in=list(pa_aln_ids))
 
-    qs = qs.order_by('aln_id')
-    page_qs, meta = _paginate(qs, request)
-    page_ids = [a.aln_id for a in page_qs]
+    # Sort by protein-name order (S-series → L-series, ascending numeric),
+    # same key as the Sequences view. Done Python-side; the Alignment table
+    # is small (~90 rows).
+    all_rows = list(qs.values('aln_id', 'name', 'method', 'source'))
+    all_rows.sort(key=lambda r: (_protein_sort_key(r['name']), r['aln_id']))
+
+    try:
+        page = max(1, int(request.GET.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = min(MAX_PAGE_SIZE, max(1, int(request.GET.get('page_size', DEFAULT_PAGE_SIZE))))
+    except (TypeError, ValueError):
+        page_size = DEFAULT_PAGE_SIZE
+    total = len(all_rows)
+    start = (page - 1) * page_size
+    page_rows = all_rows[start:start + page_size]
+    page_ids = [r['aln_id'] for r in page_rows]
+    meta = {'total': total, 'page': page, 'page_size': page_size}
 
     # Member count honors the filter narrowing so the reported count matches
     # what the user's filters would select in that alignment.
@@ -404,12 +528,12 @@ def alignments_api(request):
     )
 
     results = [{
-        'aln_id': a.aln_id,
-        'name': a.name,
-        'method': a.method,
-        'source': a.source,
-        'member_count': counts.get(a.aln_id, 0),
-    } for a in page_qs]
+        'aln_id': r['aln_id'],
+        'name': r['name'],
+        'method': r['method'],
+        'source': r['source'],
+        'member_count': counts.get(r['aln_id'], 0),
+    } for r in page_rows]
 
     return JsonResponse({'results': results, **meta})
 
@@ -499,4 +623,252 @@ def alignment_fasta_api(request, aln_id, tax_group):
         'length': max_pos,
         'sequences': sequences,
         'fasta': '\n'.join(fasta_chunks) + ('\n' if fasta_chunks else ''),
+    })
+
+
+# --------------------------------------------------------------------------
+# Alignment FASTA downloads (one .fasta per protein, zipped when >1 alignment)
+
+def _aligned_fasta_groups(aln_ids, pd_qs=None):
+    """Return {protein_name: [fasta_chunks ...]} for the given alignments.
+
+    Each entry's chunks are 60-wrapped FASTA records using the same header
+    schema as the Sequences download: >{protein}_{strain_id}.0_{abbr}|{loc}.
+    Bodies are the aligned residue strings filled from Aln_Data.
+    """
+    pa_qs = PolymerAlignments.objects.using(MITO).filter(aln_id__in=aln_ids)
+    if pd_qs is not None:
+        pa_qs = pa_qs.filter(pdata_id__in=pd_qs.values_list('id', flat=True))
+    member_pdata_ids = list(pa_qs.values_list('pdata_id', flat=True).distinct())
+    if not member_pdata_ids:
+        return {}
+
+    pd_rows = PolymerData.objects.using(MITO).filter(id__in=member_pdata_ids).values(
+        'id', 'protein_location_header',
+        'nomgd__new_name', 'strain_id', 'strain__abbreviation',
+    )
+    hdr_by_pdata = {r['id']: r for r in pd_rows}
+
+    res_rows = AlnData.objects.using(MITO).filter(
+        aln_id__in=aln_ids, res__poldata_id__in=member_pdata_ids,
+    ).values('aln_id', 'res__poldata_id', 'aln_pos', 'res__unmodresname')
+
+    aln_max = defaultdict(int)
+    per_aln_pdata = defaultdict(lambda: defaultdict(dict))
+    for r in res_rows:
+        per_aln_pdata[r['aln_id']][r['res__poldata_id']][r['aln_pos']] = (r['res__unmodresname'] or '-')
+        if r['aln_pos'] > aln_max[r['aln_id']]:
+            aln_max[r['aln_id']] = r['aln_pos']
+
+    by_protein = defaultdict(list)
+    for aln_id in aln_ids:
+        max_pos = aln_max.get(aln_id, 0)
+        if not max_pos:
+            continue
+        for pdata_id, positions in per_aln_pdata[aln_id].items():
+            hdr = hdr_by_pdata.get(pdata_id) or {}
+            protein = (hdr.get('nomgd__new_name') or 'unknown').strip()
+            abbr    = (hdr.get('strain__abbreviation') or 'unknown').strip()
+            sid     = hdr.get('strain_id') or 0
+            ploc    = (hdr.get('protein_location_header') or '').strip()
+            seq = ''.join(positions.get(p, '-') for p in range(1, max_pos + 1))
+            lines = [f">{protein}_{sid}.0_{abbr}|{ploc}"]
+            for i in range(0, len(seq), 60):
+                lines.append(seq[i:i+60])
+            by_protein[protein].append('\n'.join(lines))
+    return by_protein
+
+
+def _zip_response(by_protein, zip_name):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        if by_protein:
+            for protein, records in by_protein.items():
+                zf.writestr(f"{protein}_filtered.fasta", '\n'.join(records) + '\n')
+        else:
+            zf.writestr("empty.txt", "No alignment members matched the current filters.\n")
+    resp = HttpResponse(buf.getvalue(), content_type='application/zip')
+    resp['Content-Disposition'] = f'attachment; filename="{zip_name}"'
+    return resp
+
+
+def download_alignments_zip_api(request):
+    """Multi-alignment ZIP — one .fasta per protein.
+
+    Accepts the same filter params as alignments_api (`taxgroup_ids[]`,
+    `protein_name`) plus optional `ids=` / `exclude_ids=` for the
+    checkbox selection.
+    """
+    pd_qs = PolymerData.objects.using(MITO).all()
+    narrow = False
+    taxgroup_ids = _taxgroup_ids_param(request)
+    if taxgroup_ids:
+        strain_ids = _expand_taxgroups_to_strains(taxgroup_ids)
+        if not strain_ids:
+            return _zip_response({}, 'alignments_export.zip')
+        pd_qs = pd_qs.filter(strain_id__in=strain_ids)
+        narrow = True
+    protein_name = request.GET.get('protein_name')
+    if protein_name:
+        pd_qs = pd_qs.filter(nomgd__new_name=protein_name)
+        narrow = True
+
+    base_qs = Alignment.objects.using(MITO).all()
+    if narrow:
+        pa_aln_ids = (PolymerAlignments.objects.using(MITO)
+                      .filter(pdata_id__in=pd_qs.values_list('id', flat=True))
+                      .values_list('aln_id', flat=True).distinct())
+        base_qs = base_qs.filter(aln_id__in=list(pa_aln_ids))
+
+    ids  = _parse_id_list(request.GET.get('ids'))
+    excl = _parse_id_list(request.GET.get('exclude_ids'))
+    if ids:  base_qs = base_qs.filter(aln_id__in=ids)
+    if excl: base_qs = base_qs.exclude(aln_id__in=excl)
+    aln_ids = list(base_qs.values_list('aln_id', flat=True))
+
+    by_protein = _aligned_fasta_groups(aln_ids, pd_qs if narrow else None)
+    return _zip_response(by_protein, 'alignments_export.zip')
+
+
+def alignment_zip_api(request, aln_id, tax_group):
+    """Single-alignment download — emits a bare {protein}_filtered.fasta since
+    every alignment here represents exactly one protein."""
+    pd_qs = None
+    tax_ints = [int(x) for x in str(tax_group).split(',') if x.strip().isdigit() and int(x)]
+    if tax_ints:
+        strain_ids = _expand_taxgroups_to_strains(tax_ints)
+        if not strain_ids:
+            return _zip_response({}, f'alignment_{aln_id}.zip')
+        pd_qs = PolymerData.objects.using(MITO).filter(strain_id__in=strain_ids)
+
+    by_protein = _aligned_fasta_groups([aln_id], pd_qs)
+    if len(by_protein) == 1:
+        protein, records = next(iter(by_protein.items()))
+        body = '\n'.join(records) + '\n'
+        resp = HttpResponse(body, content_type='text/x-fasta; charset=utf-8')
+        resp['Content-Disposition'] = f'attachment; filename="{protein}_filtered.fasta"'
+        return resp
+    return _zip_response(by_protein, f'alignment_{aln_id}.zip')
+
+
+# --------------------------------------------------------------------------
+# Structure tab (Singleton_* tables)
+
+def _chain_filters(request):
+    sid_raw = (request.GET.get('structure_id') or '').strip()
+    structure_id = int(sid_raw) if sid_raw.isdigit() else None
+    protein_name = (request.GET.get('protein_name') or '').strip() or None
+    return structure_id, protein_name
+
+
+def structure_filter_options_api(request):
+    """Return both dropdown payloads with co-narrowed counts.
+
+    The Structure dropdown's counts are computed against chains filtered by
+    the *protein_name* only; the Protein dropdown's counts against chains
+    filtered by *structure_id* only. Zero-count options stay in the payload
+    so the frontend can grey them out."""
+    structure_id, protein_name = _chain_filters(request)
+
+    base = SingletonProteinChain.objects.using(MITO).all()
+
+    struct_qs = base
+    if protein_name:
+        struct_qs = struct_qs.filter(protein__protein_name=protein_name)
+    struct_counts = dict(
+        struct_qs.values_list('structure_id').annotate(c=Count('id'))
+    )
+    struct_rows = list(
+        SingletonStructure.objects.using(MITO).all().order_by('pdb_id')
+        .values('structure_id', 'pdb_id', 'organism_name', 'abbreviation')
+    )
+    structures = [
+        {
+            'structure_id':  r['structure_id'],
+            'pdb_id':        r['pdb_id'],
+            'organism_name': r['organism_name'],
+            'abbreviation':  r['abbreviation'],
+            'label':         f"{r['pdb_id']} — {r['organism_name']}",
+            'count':         int(struct_counts.get(r['structure_id'], 0)),
+        }
+        for r in struct_rows
+    ]
+
+    prot_qs = base
+    if structure_id:
+        prot_qs = prot_qs.filter(structure_id=structure_id)
+    prot_counts = dict(
+        prot_qs.values_list('protein_id').annotate(c=Count('id'))
+    )
+    prot_rows = list(
+        SingletonProtein.objects.using(MITO).all()
+        .values('protein_id', 'protein_name')
+    )
+    proteins = [
+        {
+            'protein_id':   r['protein_id'],
+            'protein_name': r['protein_name'],
+            'count':        int(prot_counts.get(r['protein_id'], 0)),
+        }
+        for r in prot_rows
+    ]
+    proteins.sort(key=lambda p: _protein_sort_key(p['protein_name']))
+
+    return JsonResponse({'structures': structures, 'proteins': proteins})
+
+
+def chains_api(request):
+    """Paginated list of Singleton_Protein_Chain rows, sorted S->L by protein
+    then by PDB id then by chain_name."""
+    structure_id, protein_name = _chain_filters(request)
+
+    qs = SingletonProteinChain.objects.using(MITO).select_related('protein', 'structure')
+    if structure_id:
+        qs = qs.filter(structure_id=structure_id)
+    if protein_name:
+        qs = qs.filter(protein__protein_name=protein_name)
+
+    rows = list(qs.values(
+        'id', 'chain_name',
+        'protein__protein_name',
+        'structure__structure_id', 'structure__pdb_id',
+        'structure__organism_name', 'structure__abbreviation',
+    ))
+    rows.sort(key=lambda r: (
+        _protein_sort_key(r['protein__protein_name']),
+        r['structure__pdb_id'] or '',
+        r['chain_name'] or '',
+    ))
+
+    try:
+        page = max(1, int(request.GET.get('page', 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(request.GET.get('page_size', DEFAULT_PAGE_SIZE))
+    except (TypeError, ValueError):
+        page_size = DEFAULT_PAGE_SIZE
+    page_size = max(1, min(page_size, MAX_PAGE_SIZE))
+
+    total = len(rows)
+    start = (page - 1) * page_size
+    page_rows = rows[start:start + page_size]
+
+    results = [
+        {
+            'id':            r['id'],
+            'chain_name':    r['chain_name'],
+            'protein_name':  r['protein__protein_name'],
+            'structure_id':  r['structure__structure_id'],
+            'pdb_id':        r['structure__pdb_id'],
+            'organism_name': r['structure__organism_name'],
+            'abbreviation':  r['structure__abbreviation'],
+        }
+        for r in page_rows
+    ]
+    return JsonResponse({
+        'results': results,
+        'total': total,
+        'page': page,
+        'page_size': page_size,
     })
