@@ -118,8 +118,30 @@ export default function MsaViewerPanel({ alnId, taxGroupId, name, onClose }) {
   }
 
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%', overflow: 'hidden' }}>
+    <div
+      ref={containerRef}
+      className="msa-viewer-panel"
+      style={{ width: '100%', height: '100%', overflow: 'hidden' }}
+    >
+      <style>{scrollbarCss}</style>
       {body}
     </div>
   );
 }
+
+// macOS overlay scrollbars stay hidden until the user scrolls; styling them
+// explicitly makes WebKit/Blink render classic, always-visible bars.
+const scrollbarCss = `
+.msa-viewer-panel ::-webkit-scrollbar { width: 12px; height: 12px; }
+.msa-viewer-panel ::-webkit-scrollbar-track { background: #f1eff7; }
+.msa-viewer-panel ::-webkit-scrollbar-thumb {
+  background: #b9b1d3;
+  border-radius: 6px;
+  border: 2px solid #f1eff7;
+}
+.msa-viewer-panel ::-webkit-scrollbar-thumb:hover { background: #9a90be; }
+.msa-viewer-panel ::-webkit-scrollbar-corner { background: #f1eff7; }
+@-moz-document url-prefix() {
+  .msa-viewer-panel * { scrollbar-color: #b9b1d3 #f1eff7; }
+}
+`;
