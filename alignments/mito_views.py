@@ -603,8 +603,8 @@ def alignment_fasta_api(request, aln_id, tax_group):
         if pos > max_pos:
             max_pos = pos
 
-    sequences = []
-    fasta_chunks = []
+    names = []
+    raw_seqs = []
     for pdata_id in member_pdata_ids:
         hdr = header_by_pdata.get(pdata_id) or {}
         positions = per_pdata.get(pdata_id, {})
@@ -616,16 +616,36 @@ def alignment_fasta_api(request, aln_id, tax_group):
         protein_name = (hdr.get('nomgd__new_name') or '').strip()
         strain_label = strain_name if not strain_strain else f"{strain_name} {strain_strain}"
         name = f"{protein_name or 'protein'}|{strain_label or ('strain_' + str(hdr.get('strain_id') or '?'))}|pdata_{pdata_id}"
-        sequences.append({'name': name, 'sequence': seq})
-        fasta_chunks.append(f">{name}\n{seq}")
+        names.append(name)
+        raw_seqs.append(seq)
+
+    raw_seqs = _drop_gap_only_columns(raw_seqs)
+    sequences = [{'name': n, 'sequence': q} for n, q in zip(names, raw_seqs)]
+    fasta_chunks = [f">{n}\n{q}" for n, q in zip(names, raw_seqs)]
 
     return JsonResponse({
         'aln_id': aln_id,
         'name': aln.name,
-        'length': max_pos,
+        'length': len(raw_seqs[0]) if raw_seqs else 0,
         'sequences': sequences,
         'fasta': '\n'.join(fasta_chunks) + ('\n' if fasta_chunks else ''),
     })
+
+
+def _drop_gap_only_columns(seqs):
+    """Remove columns that are '-' in every sequence.
+
+    `seqs` is a list of equal-length aligned strings. Narrowing an alignment
+    to a taxon subset often leaves columns that only the excluded members
+    filled; those carry no information for the remaining rows.
+    """
+    if not seqs:
+        return seqs
+    length = len(seqs[0])
+    keep = [i for i, col in enumerate(zip(*seqs)) if any(c != '-' for c in col)]
+    if len(keep) == length:
+        return seqs
+    return [''.join(s[i] for i in keep) for s in seqs]
 
 
 # --------------------------------------------------------------------------
@@ -667,6 +687,7 @@ def _aligned_fasta_groups(aln_ids, pd_qs=None):
         max_pos = aln_max.get(aln_id, 0)
         if not max_pos:
             continue
+        records = []
         for pdata_id, positions in per_aln_pdata[aln_id].items():
             hdr = hdr_by_pdata.get(pdata_id) or {}
             protein = (hdr.get('nomgd__new_name') or 'unknown').strip()
@@ -674,7 +695,10 @@ def _aligned_fasta_groups(aln_ids, pd_qs=None):
             sid     = hdr.get('strain_id') or 0
             ploc    = (hdr.get('protein_location_header') or '').strip()
             seq = ''.join(positions.get(p, '-') for p in range(1, max_pos + 1))
-            lines = [f">{protein}_{sid}.0_{abbr}|{ploc}"]
+            records.append((protein, f">{protein}_{sid}.0_{abbr}|{ploc}", seq))
+        seqs = _drop_gap_only_columns([r[2] for r in records])
+        for (protein, header, _), seq in zip(records, seqs):
+            lines = [header]
             for i in range(0, len(seq), 60):
                 lines.append(seq[i:i+60])
             by_protein[protein].append('\n'.join(lines))
