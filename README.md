@@ -17,15 +17,17 @@ A Django + Vue web app for browsing mitochondrial- and plastid-ribosomal protein
 | Build | Webpack 4 + vue-loader 15 | entry `./static/js/index.js`, output `static/bundles/` |
 | Integration | `django-webpack-loader` | `{% render_bundle 'main' %}` in `index.html` |
 | MSA viewer | Compiled UMD (`MSAV.umd.js`) | React under the hood, mounted alongside Vue via `ReactDOM.render`. Wiring deferred to phase 2. |
-| Python venv | `~/ncRNA/.venv` (Python 3.10) | Shared with the ncRNA sister project. **Use this venv for every Python command.** |
+| Python venv | `.venv` (Python 3.10) | Project-local, gitignored. **Use this venv for every Python command.** |
 
 ---
 
 ## Quick start
 
 ```bash
-# clone, then
-source ~/ncRNA/.venv/bin/activate
+# clone, then (Python 3.10)
+python3.10 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pip install --no-deps -r requirements-nodeps.txt   # TwinCons pins an unbuildable scikit-learn
 export DJANGO_SECRET_KEY='...'
 export DJANGO_USERNAME='...'      # read-write access to DESIRE_mito_as1
 export DJANGO_PASSWORD='...'
@@ -35,6 +37,7 @@ python manage.py runserver        # localhost:8000
 
 # in another shell:
 npm install
+export NODE_OPTIONS=--openssl-legacy-provider   # webpack 4 on Node >= 17
 npm run build                     # one-shot build
 # or: npm run watch               # rebuild on change
 ```
@@ -250,7 +253,7 @@ Review the diff before committing — `inspectdb` drops comments, may rename col
 5. **`Nomenclature` has other columns** (`MoleculeGroup`, `PhylogeneticOccurence`, etc.) — the UI intentionally ignores them. Use only `new_name`.
 6. **MSA viewer files are present but not wired.** `MSAV.umd.js` and friends are reserved for phase 2; don't delete them.
 7. **Cleanup history.** A prior mass cleanup removed `react-msa-viewer/`, `pdbe-rna-viewer/`, `pdb-topology-viewer/`, `populate_db/`, `desire_api/`, `.env/` (the old Python 3.6 venv), `node_modules/`, and most of `static/alignments/`. The old frontend (`DropDownTree.vue`) is gone; `MainPage.vue` is the replacement. `alignments/templates/alignments/index.html` still has a few `{% static 'alignments/...' %}` references pointing at deleted files — strip those when you touch that template.
-8. **`.env/` and `.venv/` are both absent/empty.** Use `~/ncRNA/.venv` instead. Reinstall requirements into that venv if TwinCons or other packages are missing.
+8. **Python deps are pinned for 3.10.** Install `requirements.txt` normally and `requirements-nodeps.txt` with `--no-deps` (TwinCons declares `scikit-learn==0.23.2`, which does not build on 3.10).
 
 ---
 

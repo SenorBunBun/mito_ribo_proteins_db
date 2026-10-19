@@ -50,5 +50,8 @@ export default function initialState() {
     // Selected row detail
     selectedDetail: null,
     detailLoading: false,
+
+    // Cursor-following "Click to View Alignment" hint on alignment rows.
+    alnHoverTip: null,
   };
 }

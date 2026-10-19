@@ -55,7 +55,7 @@
             </select>
           </div>
           <div class="filter-group">
-            <label class="filter-label" for="f-dataloc">Data location</label>
+            <label class="filter-label" for="f-dataloc">Database Source</label>
             <select id="f-dataloc" v-model="sequenceFilters.data_location" @change="onSeqFilterChange()">
               <option value="">All</option>
               <option v-for="v in filterOptions.data_location" :key="v" :value="v">{{ v }}</option>
@@ -66,13 +66,6 @@
             <select id="f-origin" v-model="sequenceFilters.evolutionary_origin" @change="onSeqFilterChange()">
               <option value="">All</option>
               <option v-for="v in filterOptions.evolutionary_origin" :key="v" :value="v">{{ v }}</option>
-            </select>
-          </div>
-          <div class="filter-group">
-            <label class="filter-label" for="f-prediction">Prediction type</label>
-            <select id="f-prediction" v-model="sequenceFilters.prediction_type" @change="onSeqFilterChange()">
-              <option value="">All</option>
-              <option v-for="v in filterOptions.prediction_type" :key="v" :value="v">{{ v }}</option>
             </select>
           </div>
           <div class="filter-group filter-tree">
@@ -126,7 +119,7 @@
             </select>
           </div>
           <div class="filter-group">
-            <label class="filter-label" for="o-dataloc">Data location</label>
+            <label class="filter-label" for="o-dataloc">Database Source</label>
             <select id="o-dataloc" v-model="organismFilters.data_location" @change="onOrgFilterChange()">
               <option value="">All</option>
               <option v-for="v in filterOptions.data_location" :key="v" :value="v">{{ v }}</option>
@@ -137,13 +130,6 @@
             <select id="o-origin" v-model="organismFilters.evolutionary_origin" @change="onOrgFilterChange()">
               <option value="">All</option>
               <option v-for="v in filterOptions.evolutionary_origin" :key="v" :value="v">{{ v }}</option>
-            </select>
-          </div>
-          <div class="filter-group">
-            <label class="filter-label" for="o-prediction">Prediction type</label>
-            <select id="o-prediction" v-model="organismFilters.prediction_type" @change="onOrgFilterChange()">
-              <option value="">All</option>
-              <option v-for="v in filterOptions.prediction_type" :key="v" :value="v">{{ v }}</option>
             </select>
           </div>
           <div class="filter-group filter-tree">
@@ -292,8 +278,8 @@
               <th>Protein</th>
               <th>Strain</th>
               <th>Origin</th>
-              <th>Prediction</th>
-              <th>Header</th>
+              <th>Sequence Location</th>
+              <th>Assembly Location</th>
             </tr>
           </thead>
           <tbody>
@@ -313,8 +299,8 @@
               <td class="mono">{{ r.protein_name || '—' }}</td>
               <td>{{ r.strain_name || '—' }}</td>
               <td>{{ r.evolutionary_origin || '—' }}</td>
-              <td class="small">{{ r.prediction_type || '—' }}</td>
-              <td class="truncate mono small" :title="r.protein_location_header">{{ r.protein_location_header || '—' }}</td>
+              <td class="truncate small" :title="r.sequence_location">{{ r.sequence_location || '—' }}</td>
+              <td class="truncate small" :title="r.assembly_location">{{ r.assembly_location || '—' }}</td>
             </tr>
           </tbody>
         </table>
@@ -379,7 +365,9 @@
               <tr
                 v-for="r in results"
                 :key="r.aln_id"
-                @click="selectedAlignment = r"
+                @click="selectedAlignment = r; alnHoverTip = null"
+                @mousemove="onAlnRowHover"
+                @mouseleave="alnHoverTip = null"
                 :class="{ selected: selectedAlignment && selectedAlignment.aln_id === r.aln_id }"
               >
                 <td class="sel-col" @click.stop>
@@ -397,6 +385,11 @@
             </tbody>
           </table>
           <div v-else-if="!loading" class="muted empty">No alignments contain a member matching the current selection.</div>
+          <div
+            v-if="alnHoverTip"
+            class="aln-hover-tip"
+            :style="{ left: alnHoverTip.x + 'px', top: alnHoverTip.y + 'px' }"
+          >Click to View Alignment</div>
         </template>
       </section>
 
@@ -494,7 +487,7 @@
           >Download FASTA</button>
           <button type="button" class="close-btn msa-close-btn" @click.stop="closeMsa" aria-label="Close">×</button>
         </header>
-        <div ref="msaMount" class="msa-mount" @mousedown="msaDragStart"></div>
+        <div ref="msaMount" class="msa-mount"></div>
       </div>
     </main>
   </div>
@@ -948,33 +941,12 @@ export default {
         this.closeMsa();
       }
     },
-    msaDragStart(e) {
-      if (e.button !== 0) return;
-      const el = this.$refs.msaMount;
-      if (!el) return;
-      this._msaDrag = {
-        startX: e.clientX,
-        startY: e.clientY,
-        scrollLeft: el.scrollLeft,
-        scrollTop: el.scrollTop,
-      };
-      el.style.cursor = 'grabbing';
-      window.addEventListener('mousemove', this.msaDragMove);
-      window.addEventListener('mouseup', this.msaDragEnd);
-      e.preventDefault();
-    },
-    msaDragMove(e) {
-      const el = this.$refs.msaMount;
-      if (!el || !this._msaDrag) return;
-      el.scrollLeft = this._msaDrag.scrollLeft - (e.clientX - this._msaDrag.startX);
-      el.scrollTop = this._msaDrag.scrollTop - (e.clientY - this._msaDrag.startY);
-    },
-    msaDragEnd() {
-      const el = this.$refs.msaMount;
-      if (el) el.style.cursor = '';
-      this._msaDrag = null;
-      window.removeEventListener('mousemove', this.msaDragMove);
-      window.removeEventListener('mouseup', this.msaDragEnd);
+    onAlnRowHover(e) {
+      if (e.target.closest('.sel-col')) {
+        this.alnHoverTip = null;
+        return;
+      }
+      this.alnHoverTip = { x: e.clientX + 12, y: e.clientY + 18 };
     },
     removeChip(chip) {
       if (chip.kind === 'taxgroup') {
@@ -1358,6 +1330,17 @@ export default {
   transition: background 0.1s;
 }
 .results-table tbody tr:hover { background: var(--purple-tint); }
+.aln-hover-tip {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--ink, #1f1b2e);
+  color: #fff;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
 .results-table tbody tr.selected {
   background: var(--purple-tint);
   box-shadow: inset 2px 0 0 var(--purple-deep);
@@ -1621,10 +1604,10 @@ export default {
 }
 .msa-mount {
   flex: 1;
-  overflow: auto;
+  min-height: 0;
+  overflow: hidden;
   padding: 0;
   width: 100%;
-  cursor: grab;
   user-select: none;
 }
 
