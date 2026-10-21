@@ -292,6 +292,26 @@ def sequence_detail_api(request, pdata_id):
 # --------------------------------------------------------------------------
 # /api/sequences/fasta/
 
+def _fasta_header(protein, abbr, species, location, other_id):
+    """>{protein}|{5-letter code}|{Species_name}|location={location}|{other id}
+
+    Shared by every FASTA download. Missing values become NA; spaces in the
+    species name become underscores so tools that split on whitespace keep
+    the whole header. Internal placeholder ids such as
+    "Reclinomonas_americana_bL7m_n" (species_protein_location[n]) only repeat
+    the other fields, so they are reported as NA too.
+    """
+    def val(x):
+        x = (x or '').strip()
+        return x or 'NA'
+    protein = val(protein)
+    other_id = val(other_id)
+    if re.search(rf'_{re.escape(protein)}_[mnu]\d*$', other_id, re.IGNORECASE):
+        other_id = 'NA'
+    species = '_'.join(val(species).split())
+    return f">{protein}|{val(abbr)}|{species}|location={val(location)}|{other_id}"
+
+
 def _parse_id_list(raw):
     out = []
     for part in (raw or '').split(','):
@@ -309,7 +329,7 @@ def download_fasta_api(request):
     intersected with the filter set so the user can only download
     rows they could see.
 
-    Header format: >{protein}_{strain_abbreviation}|{protein_location_header}
+    Header format: see _fasta_header.
     """
     qs = _build_sequences_qs(request)
 
@@ -322,25 +342,25 @@ def download_fasta_api(request):
 
     rows = list(qs.values(
         'id', 'protein_location_header',
-        'nomgd__new_name', 'strain_id', 'strain__abbreviation',
+        'nomgd__new_name', 'strain__name', 'strain__abbreviation',
     ))
     row_ids = [r['id'] for r in rows]
-    seqs = dict(
-        PolymerMetadata.objects.using(MITO)
-            .filter(pdata_id__in=row_ids)
-            .values_list('pdata_id', 'fullseq')
-    )
+    meta = {}
+    for m in (PolymerMetadata.objects.using(MITO)
+              .filter(pdata_id__in=row_ids)
+              .values('pdata_id', 'fullseq', 'sequence_location')):
+        meta.setdefault(m['pdata_id'], m)
 
     def fasta_gen():
         for r in rows:
-            seq = (seqs.get(r['id']) or '').strip()
+            md = meta.get(r['id'], {})
+            seq = (md.get('fullseq') or '').strip()
             if not seq:
                 continue
-            protein = (r['nomgd__new_name'] or 'unknown').strip()
-            abbr    = (r['strain__abbreviation'] or 'unknown').strip()
-            header  = (r['protein_location_header'] or '').strip()
-            sid     = r['strain_id']
-            yield f">{protein}_{sid}.0_{abbr}|{header}\n"
+            yield _fasta_header(
+                r['nomgd__new_name'], r['strain__abbreviation'], r['strain__name'],
+                md.get('sequence_location'), r['protein_location_header'],
+            ) + '\n'
             for i in range(0, len(seq), 60):
                 yield seq[i:i+60] + '\n'
 
@@ -655,7 +675,7 @@ def _aligned_fasta_groups(aln_ids, pd_qs=None):
     """Return {protein_name: [fasta_chunks ...]} for the given alignments.
 
     Each entry's chunks are 60-wrapped FASTA records using the same header
-    schema as the Sequences download: >{protein}_{strain_id}.0_{abbr}|{loc}.
+    schema as the Sequences download (see _fasta_header).
     Bodies are the aligned residue strings filled from Aln_Data.
     """
     pa_qs = PolymerAlignments.objects.using(MITO).filter(aln_id__in=aln_ids)
@@ -667,9 +687,14 @@ def _aligned_fasta_groups(aln_ids, pd_qs=None):
 
     pd_rows = PolymerData.objects.using(MITO).filter(id__in=member_pdata_ids).values(
         'id', 'protein_location_header',
-        'nomgd__new_name', 'strain_id', 'strain__abbreviation',
+        'nomgd__new_name', 'strain__name', 'strain__abbreviation',
     )
     hdr_by_pdata = {r['id']: r for r in pd_rows}
+    loc_by_pdata = {}
+    for pdata_id, loc in (PolymerMetadata.objects.using(MITO)
+                          .filter(pdata_id__in=member_pdata_ids)
+                          .values_list('pdata_id', 'sequence_location')):
+        loc_by_pdata.setdefault(pdata_id, loc)
 
     res_rows = AlnData.objects.using(MITO).filter(
         aln_id__in=aln_ids, res__poldata_id__in=member_pdata_ids,
@@ -691,11 +716,13 @@ def _aligned_fasta_groups(aln_ids, pd_qs=None):
         for pdata_id, positions in per_aln_pdata[aln_id].items():
             hdr = hdr_by_pdata.get(pdata_id) or {}
             protein = (hdr.get('nomgd__new_name') or 'unknown').strip()
-            abbr    = (hdr.get('strain__abbreviation') or 'unknown').strip()
-            sid     = hdr.get('strain_id') or 0
-            ploc    = (hdr.get('protein_location_header') or '').strip()
+            header = _fasta_header(
+                hdr.get('nomgd__new_name'), hdr.get('strain__abbreviation'),
+                hdr.get('strain__name'), loc_by_pdata.get(pdata_id),
+                hdr.get('protein_location_header'),
+            )
             seq = ''.join(positions.get(p, '-') for p in range(1, max_pos + 1))
-            records.append((protein, f">{protein}_{sid}.0_{abbr}|{ploc}", seq))
+            records.append((protein, header, seq))
         seqs = _drop_gap_only_columns([r[2] for r in records])
         for (protein, header, _), seq in zip(records, seqs):
             lines = [header]
