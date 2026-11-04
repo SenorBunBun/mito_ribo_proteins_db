@@ -6,10 +6,13 @@ import {
   OverviewBar,
 } from './MSAV.umd.js';
 
-// API names are "protein|organism|pdata_N"; the viewer only shows the organism.
+// API names are "protein|organism|pdata_N"; the viewer shows "organism|N" so
+// repeated organisms stay distinguishable.
 function organismLabel(name) {
   const parts = (name || '').split('|');
-  return parts.length >= 3 ? parts.slice(1, -1).join('|') : name;
+  if (parts.length < 3) return name;
+  const id = parts[parts.length - 1].replace(/^pdata_/, '');
+  return `${parts.slice(1, -1).join('|')}|${id}`;
 }
 
 export default function MsaViewerPanel({ alnId, taxGroupId, name, onClose }) {
