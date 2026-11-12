@@ -122,7 +122,7 @@ DATABASES = {
           'isolation_level': None,
           'autocommit': True,
           'use_pure': True,
-          'connection_timeout': 5,
+          'connection_timeout': 2,
         },
     },
     
@@ -140,7 +140,7 @@ DATABASES = {
           'isolation_level': None,
           'autocommit': True,
           'use_pure': True,
-          'connection_timeout': 5,
+          'connection_timeout': 2,
         },
     },
 
@@ -160,7 +160,7 @@ DATABASES = {
           'isolation_level': None,
           'autocommit': True,
           'use_pure': True,
-          'connection_timeout': 5,
+          'connection_timeout': 2,
         },
     }
 }
