@@ -22,12 +22,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = []
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DJANGO_ENV', 'dev') != 'prod'
 
 ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '130.207.36.76','apollo2.chemistry.gatech.edu','ribovision2.chemistry.gatech.edu','[::1]']
 
@@ -49,6 +44,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -63,6 +59,22 @@ CSRF_HEADER_NAME = 'HTTP_X_CSRFTOKEN'
 CSRF_TRUSTED_ORIGINS = ['https://ribovision2.chemistry.gatech.edu:443','https://proteovision.chemistry.gatech.edu:443']
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# --- Upsun / Platform.sh: trust the generated environment domains ---
+# PLATFORM_ROUTES is a base64-encoded JSON map of the environment's URLs,
+# so we never have to hardcode the (per-environment) generated hostname.
+import base64, json, urllib.parse
+_routes_b64 = os.environ.get('PLATFORM_ROUTES')
+if _routes_b64:
+    try:
+        for _url in json.loads(base64.b64decode(_routes_b64).decode('utf-8')):
+            _host = urllib.parse.urlparse(_url).hostname
+            if _host and _host not in ALLOWED_HOSTS:
+                ALLOWED_HOSTS.append(_host)
+                CSRF_TRUSTED_ORIGINS.append(_host)
+    except Exception:
+        pass
+
 ROOT_URLCONF = 'DESIRE.urls'
 CORS_ORIGIN_ALLOW_ALL = True
 
@@ -230,16 +242,17 @@ COMPRESS_ENABLED = True
 DJANGO_ENV = os.environ.get('DJANGO_ENV', 'dev')
 IS_PROD    = DJANGO_ENV == 'prod'
 
-APP_PREFIX = '/mtProts' if IS_PROD else ''
-STATIC_DIR = '/var/www/mito_ribo_proteins_db' if IS_PROD else BASE_DIR
-
-if IS_PROD:
+# URL prefix is now opt-in (via APP_PREFIX) and no longer tied to prod, so the
+# app serves at the domain root on Upsun. Set APP_PREFIX=/mtProts to restore the
+# legacy mount point.
+APP_PREFIX = os.environ.get('APP_PREFIX', '')
+if APP_PREFIX:
     FORCE_SCRIPT_NAME = APP_PREFIX
-    STATIC_URL  = f'{APP_PREFIX}/static/'
-    STATIC_ROOT = f'{STATIC_DIR}/static/'
-else:
-    STATIC_URL  = '/static/'
-    STATIC_ROOT = '/home/RiboVision3/static/'
 
-COMPRESS_ROOT = 'static/'
+STATIC_URL  = f'{APP_PREFIX}/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+COMPRESS_ROOT = STATIC_ROOT
+# Offline compression at build time — the runtime filesystem is read-only.
+COMPRESS_OFFLINE = IS_PROD
 DATA_UPLOAD_MAX_MEMORY_SIZE = 80*1024**2
