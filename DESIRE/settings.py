@@ -251,6 +251,9 @@ if APP_PREFIX:
 
 STATIC_URL  = f'{APP_PREFIX}/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+# The webpack bundle is written to the repo-root static/ dir (static/bundles/);
+# include it so collectstatic gathers it into STATIC_ROOT and it is served.
+STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 
 COMPRESS_ROOT = STATIC_ROOT
 # No {% compress %} tags are used in templates, so leave offline compression off
