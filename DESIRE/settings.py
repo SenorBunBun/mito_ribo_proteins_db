@@ -116,6 +116,10 @@ DATABASES = {
 	'HOST': '130.207.36.76',
         'PORT': '3306',
         'OPTIONS': {
+          # isolation_level MUST be present (even as None): the mysql.connector
+          # Django backend does options.pop('isolation_level') and, if the key
+          # is missing, the KeyError skips applying ALL other OPTIONS below.
+          'isolation_level': None,
           'autocommit': True,
           'use_pure': True,
           'connection_timeout': 5,
@@ -130,6 +134,10 @@ DATABASES = {
 	'HOST': '130.207.36.76',
         'PORT': '3306',
         'OPTIONS': {
+          # isolation_level MUST be present (even as None): the mysql.connector
+          # Django backend does options.pop('isolation_level') and, if the key
+          # is missing, the KeyError skips applying ALL other OPTIONS below.
+          'isolation_level': None,
           'autocommit': True,
           'use_pure': True,
           'connection_timeout': 5,
@@ -146,6 +154,10 @@ DATABASES = {
         'HOST': '130.207.36.76',
         'PORT': '3306',
         'OPTIONS': {
+          # isolation_level MUST be present (even as None): the mysql.connector
+          # Django backend does options.pop('isolation_level') and, if the key
+          # is missing, the KeyError skips applying ALL other OPTIONS below.
+          'isolation_level': None,
           'autocommit': True,
           'use_pure': True,
           'connection_timeout': 5,
