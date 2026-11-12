@@ -6,15 +6,6 @@ import {
   OverviewBar,
 } from './MSAV.umd.js';
 
-// API names are "protein|organism|pdata_N"; the viewer shows "organism|N" so
-// repeated organisms stay distinguishable.
-function organismLabel(name) {
-  const parts = (name || '').split('|');
-  if (parts.length < 3) return name;
-  const id = parts[parts.length - 1].replace(/^pdata_/, '');
-  return `${parts.slice(1, -1).join('|')}|${id}`;
-}
-
 export default function MsaViewerPanel({ alnId, taxGroupId, name, onClose }) {
   const [seqs, setSeqs] = useState(null);
   const [error, setError] = useState(null);
@@ -70,7 +61,7 @@ export default function MsaViewerPanel({ alnId, taxGroupId, name, onClose }) {
         if (cancelled) return;
         const parsed = Array.isArray(data.sequences) ? data.sequences : [];
         if (!parsed.length) throw new Error('Empty alignment');
-        setSeqs(parsed.map((s) => ({ ...s, name: organismLabel(s.name) })));
+        setSeqs(parsed);
       })
       .catch((e) => {
         if (!cancelled) setError(e.message || String(e));
@@ -80,7 +71,7 @@ export default function MsaViewerPanel({ alnId, taxGroupId, name, onClose }) {
 
   const tileWidth = 16;
   const tileHeight = 20;
-  const labelsWidth = 240;
+  const labelsWidth = 360;
   const overviewBarHeight = 50;
   const positionBarHeight = 20;
   const padding = 12;
