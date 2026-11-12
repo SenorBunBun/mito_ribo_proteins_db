@@ -118,6 +118,7 @@ DATABASES = {
         'OPTIONS': {
           'autocommit': True,
           'use_pure': True,
+          'connection_timeout': 5,
         },
     },
     
@@ -131,6 +132,7 @@ DATABASES = {
         'OPTIONS': {
           'autocommit': True,
           'use_pure': True,
+          'connection_timeout': 5,
         },
     },
 
@@ -146,6 +148,7 @@ DATABASES = {
         'OPTIONS': {
           'autocommit': True,
           'use_pure': True,
+          'connection_timeout': 5,
         },
     }
 }
