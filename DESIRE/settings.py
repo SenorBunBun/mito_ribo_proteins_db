@@ -253,6 +253,7 @@ STATIC_URL  = f'{APP_PREFIX}/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 COMPRESS_ROOT = STATIC_ROOT
-# Offline compression at build time — the runtime filesystem is read-only.
-COMPRESS_OFFLINE = IS_PROD
+# No {% compress %} tags are used in templates, so leave offline compression off
+# (the runtime filesystem is read-only, but with no tags nothing is compressed).
+COMPRESS_OFFLINE = False
 DATA_UPLOAD_MAX_MEMORY_SIZE = 80*1024**2

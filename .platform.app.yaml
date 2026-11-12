@@ -37,7 +37,6 @@ hooks:
 
     # --- Django static pipeline ---
     python manage.py collectstatic --noinput
-    python manage.py compress --force   # offline: runtime FS is read-only
 
 web:
   commands:
