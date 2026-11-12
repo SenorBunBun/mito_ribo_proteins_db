@@ -1,0 +1,53 @@
+name: app
+type: "python:3.10"
+
+disk: 512
+
+# Node is needed only to build the Vue/webpack bundle. The Python container
+# ships no Node, so we install the `n` version manager and pin Node 20
+# (matches local; webpack 4 needs the legacy OpenSSL flag, which only exists
+# on Node >= 17).
+dependencies:
+  nodejs:
+    n: "*"
+
+variables:
+  env:
+    DJANGO_ENV: "prod"
+
+hooks:
+  build: |
+    set -eu
+
+    # --- Python deps ---
+    pip install -r requirements.txt
+    # TwinCons pins an unbuildable scikit-learn; install it without deps.
+    pip install --no-deps -r requirements-nodeps.txt
+
+    # --- Node 20 via `n` ---
+    export N_PREFIX="$PLATFORM_APP_DIR/.n"
+    export PATH="$N_PREFIX/bin:$PATH"
+    n 20
+    node --version
+
+    # --- Frontend bundle (webpack 4) ---
+    export NODE_OPTIONS=--openssl-legacy-provider
+    npm install
+    npm run build            # -> static/bundles/ + webpack-stats.json
+
+    # --- Django static pipeline ---
+    python manage.py collectstatic --noinput
+    python manage.py compress --force   # offline: runtime FS is read-only
+
+web:
+  commands:
+    start: "gunicorn -w 4 -b unix:$SOCKET DESIRE.wsgi:application"
+  upstream:
+    socket_family: unix
+  locations:
+    "/":
+      passthru: true
+    "/static":
+      root: "staticfiles"
+      expires: 1h
+      allow: true

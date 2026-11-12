@@ -1,0 +1,2 @@
+# No managed services — the app connects directly to the external
+# apollo2 MySQL (130.207.36.76:3306), configured via settings.py + env vars.
